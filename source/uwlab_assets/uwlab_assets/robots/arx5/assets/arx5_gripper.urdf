@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<robot name="X5A_Gripper">
+  <link name="link6">
+    <inertial>
+      <origin xyz="0.041697 2.4368E-05 0.00014464" rpy="0 0 0" />
+      <mass value="0.44089" />
+      <inertia ixx="0.00038" ixy="0.00000" ixz="0.00000" iyy="0.00028" iyz="0.00000" izz="0.00050" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link6.STL" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link6.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <link name="link7">
+    <inertial>
+      <origin xyz="-0.00035522 -0.007827 -0.0029883" rpy="0 0 0" />
+      <mass value="0.064798" />
+      <inertia ixx="0.00002" ixy="0.00000" ixz="0.00000" iyy="0.00003" iyz="0.00000" izz="0.00003" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link7.STL" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link7.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint7" type="prismatic">
+    <origin xyz="0.08657 0.024896 -0.0002436" rpy="0 0 0" />
+    <parent link="link6" />
+    <child link="link7" />
+    <axis xyz="0 1 0" />
+    <limit lower="0" upper="0.044" effort="100" velocity="1000" />
+  </joint>
+  <link name="link8">
+    <inertial>
+      <origin xyz="-0.00035522 0.0078277 0.0024201" rpy="0 0 0" />
+      <mass value="0.064798" />
+      <inertia ixx="0.00002" ixy="0.00000" ixz="0.00000" iyy="0.00003" iyz="0.00000" izz="0.00003" />
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link8.STL" />
+      </geometry>
+      <material name="black">
+        <color rgba="0 0 0 1" />
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0" />
+      <geometry>
+        <mesh filename="meshes/link8.STL" />
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint8" type="prismatic">
+    <origin xyz="0.08657 -0.0249 -0.00024366" rpy="0 0 0" />
+    <parent link="link6" />
+    <child link="link8" />
+    <axis xyz="0 -1 0" />
+    <limit lower="0" upper="0.044" effort="100" velocity="1000" />
+  </joint>
+</robot>

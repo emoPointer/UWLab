@@ -25,6 +25,10 @@ parser.add_argument(
     "--dataset_dir", type=str, default="./Datasets/OmniReset/", help="Root Datasets/OmniReset/ directory."
 )
 parser.add_argument("--num_grasps", type=int, default=500, help="Number of grasp candidates to evaluate.")
+parser.add_argument(
+    "--gripper_body_name", type=str, default="robotiq_base_link",
+    help="Gripper body name for grasp recording (e.g. 'gripper0_right_base' for ARX5).",
+)
 
 AppLauncher.add_app_launcher_args(parser)
 args_cli, remaining_args = parser.parse_known_args()
@@ -75,7 +79,7 @@ def main(env_cfg, agent_cfg) -> None:
     env_cfg.recorders = task_mdp.GraspRelativePoseRecorderManagerCfg(
         robot_name="robot",
         object_name="object",
-        gripper_body_name="robotiq_base_link",
+        gripper_body_name=args_cli.gripper_body_name,
     )
     env_cfg.recorders.dataset_export_dir_path = output_dir
     env_cfg.recorders.dataset_filename = "grasps.pt"

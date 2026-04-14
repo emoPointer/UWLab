@@ -8,11 +8,14 @@
 **/*.dmp
 **/.thumbs
 
-# No USD files allowed in the repo
+# No USD files allowed in the repo (hosted on HuggingFace cloud)
 **/*.usd
 **/*.usda
 **/*.usdc
 **/*.usdz
+# Exception: ARX5 local assets (not yet on HuggingFace)
+!source/uwlab_assets/uwlab_assets/robots/arx5/assets/*.usd
+!source/uwlab_assets/uwlab_assets/robots/arx5/assets/**/*.usd
 
 # Python
 .DS_Store
@@ -71,3 +74,5 @@ tests/
 
 # Docker history
 .uw-lab-docker-history
+*.pt
+*.hdf5

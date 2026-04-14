@@ -64,7 +64,11 @@ class grasp_sampling_event(ManagerTermBase):
         self.gripper_approach_direction = tuple(metadata.get("gripper_approach_direction"))
         self.grasp_align_axis = tuple(metadata.get("grasp_align_axis"))
         self.orientation_sample_axis = tuple(metadata.get("orientation_sample_axis"))
-        self.gripper_joint_reset_config = {"finger_joint": metadata.get("finger_open_joint_angle")}
+        gripper_reset_cfg = metadata.get("gripper_joint_reset_config")
+        if gripper_reset_cfg is not None:
+            self.gripper_joint_reset_config = dict(gripper_reset_cfg)
+        else:
+            self.gripper_joint_reset_config = {"finger_joint": metadata.get("finger_open_joint_angle")}
 
         # Store environment reference for later use
         self._env = env

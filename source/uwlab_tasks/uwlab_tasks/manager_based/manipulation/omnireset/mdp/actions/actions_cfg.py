@@ -5,7 +5,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import MISSING
+
+import torch
 
 from isaaclab.managers.action_manager import ActionTerm
 from isaaclab.managers.manager_term_cfg import ActionTermCfg
@@ -18,8 +21,8 @@ from . import task_space_actions
 class RelCartesianOSCActionCfg(ActionTermCfg):
     """Configuration for Relative Cartesian OSC action term.
 
-    Uses the analytical Jacobian from calibrated UR5e kinematics and a simple
-    task-space PD controller matching the real robot's OSC implementation:
+    Uses an analytical Jacobian and a simple task-space PD controller matching
+    the real robot's OSC implementation:
         tau = J^T @ (Kp * pose_error + Kd * vel_error)
 
     No inertial dynamics decoupling, no mass matrix. Designed to work with
@@ -57,3 +60,11 @@ class RelCartesianOSCActionCfg(ActionTermCfg):
 
     torque_limit: tuple[float, float, float, float, float, float] = (150.0, 150.0, 150.0, 28.0, 28.0, 28.0)
     """Per-joint torque limits (clamped after J^T multiplication)."""
+
+    jacobian_fn: Callable[[torch.Tensor, str], torch.Tensor] | None = None
+    """Analytical Jacobian function: (joint_pos, device) -> (N, 6, num_dof).
+
+    If None, defaults to the UR5e analytical Jacobian from
+    ``uwlab_assets.robots.ur5e_robotiq_gripper.kinematics``.
+    Set this to the ARX5 Jacobian function for ARX5 robots.
+    """

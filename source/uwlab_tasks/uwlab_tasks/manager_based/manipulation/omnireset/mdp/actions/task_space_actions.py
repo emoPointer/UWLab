@@ -13,7 +13,7 @@ import isaaclab.utils.math as math_utils
 from isaaclab.assets import Articulation
 from isaaclab.managers.action_manager import ActionTerm
 
-from uwlab_assets.robots.ur5e_robotiq_gripper.kinematics import compute_jacobian_analytical
+from uwlab_assets.robots.ur5e_robotiq_gripper.kinematics import compute_jacobian_analytical as _ur5e_jacobian_fn
 
 from . import actions_cfg
 
@@ -46,6 +46,9 @@ class RelCartesianOSCAction(ActionTerm):
 
     def __init__(self, cfg: actions_cfg.RelCartesianOSCActionCfg, env: ManagerBasedEnv):
         super().__init__(cfg, env)
+
+        # Analytical Jacobian function (pluggable per robot)
+        self._jacobian_fn = cfg.jacobian_fn if cfg.jacobian_fn is not None else _ur5e_jacobian_fn
 
         # Resolve joints
         self._joint_ids, self._joint_names = self._asset.find_joints(self.cfg.joint_names)
@@ -146,7 +149,7 @@ class RelCartesianOSCAction(ActionTerm):
         joint_vel = self._asset.data.joint_vel[:, self._joint_ids]
 
         # Analytical Jacobian (base_link frame, matching EE pose frame)
-        jacobian = compute_jacobian_analytical(joint_pos, device=str(self.device))
+        jacobian = self._jacobian_fn(joint_pos, device=str(self.device))
 
         # EE velocity from J @ dq (consistent with analytical Jacobian)
         ee_vel = torch.bmm(jacobian, joint_vel.unsqueeze(-1)).squeeze(-1)  # (N, 6)

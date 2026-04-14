@@ -1,0 +1,91 @@
+# Metadata for ARX5 standalone gripper (URDF-converted)
+# Co-located with arx5_gripper.usd for grasp sampling
+#
+# NOTE: grasp_align_axis / gripper_approach_direction / orientation_sample_axis
+# must match Robotiq convention [1,0,0] because the grasp sampling algorithm
+# was designed around that convention. The ARX5 gripper's physical finger
+# open/close axis is Y in its URDF frame, but the grasp sampling code
+# uses these axes as a unified reference. Setting all to [1,0,0] ensures
+# consistent grasp pose generation.
+
+# Gripper offset from EE body (link6) to grasp contact point
+# pos: finger joints are at ~0.087m in +X from link6 origin
+# quat: identity (link6 is the EE body itself)
+gripper_offset:
+  pos: [0.11306, 0.0, 0.0]
+  quat: [1.0, 0.0, 0.0, 0.0]
+
+# Gripper geometry parameters
+maximum_aperture: 0.088          # ~2 * 0.044m max travel
+finger_offset: 0.08657           # X-offset from link6 origin to finger joints
+finger_clearance: 0.005          # clearance between fingers and object
+finger_open_joint_angle: 0.044   # joint position when fully open
+
+# Gripper approach and alignment axes (in gripper local frame)
+# All set to [1,0,0] to match Robotiq convention used by grasp sampling algorithm
+gripper_approach_direction: [1, 0, 0]
+grasp_align_axis: [1, 0, 0]
+orientation_sample_axis: [1, 0, 0]
+
+# Joint reset config for grasp sampling (maps joint name -> open position)
+gripper_joint_reset_config:
+  joint7: 0.044
+  joint8: 0.044
+
+# System identification parameters (for sim2real)
+sysid:
+  armature: 0.01
+  static_friction: 0.5
+  dynamic_ratio: 0.8
+  viscous_friction: 0.01
+
+# ---------------------------------------------------------------------------
+# Calibrated kinematics (values taken from arx5.urdf — delta = 0 placeholder).
+# The `axis` field is REQUIRED for ARX5 because joints have mixed axes (Z/Y/Y/Y/Z/X).
+# Used by: uwlab_assets.robots.arx5.kinematics.compute_jacobian_analytical.
+# Frame: each entry is joint_i's fixed transform relative to its parent link.
+# ---------------------------------------------------------------------------
+calibrated_joints:
+  xyz:
+    - [0.0, 0.0, 0.0605]          # joint1 (base_link -> link1)
+    - [0.02, 0.0, 0.04]           # joint2 (link1 -> link2)
+    - [-0.264, 0.0, 0.0]          # joint3 (link2 -> link3) -- rpy has X-flip
+    - [0.245, 0.0, -0.056]        # joint4 (link3 -> link4)
+    - [0.06775, 0.0005, -0.0865]  # joint5 (link4 -> link5)
+    - [0.02895, 0.0, 0.0865]      # joint6 (link5 -> link6) -- rpy has X-flip
+  rpy:
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [3.1416, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [0.0, 0.0, 0.0]
+    - [-3.1416, 0.0, 0.0]
+  axis:
+    - [0, 0, 1]
+    - [0, 1, 0]
+    - [0, 1, 0]
+    - [0, 1, 0]
+    - [0, 0, 1]
+    - [1, 0, 0]
+
+# ---------------------------------------------------------------------------
+# Link inertials (link1..link6) — copied from arx5.urdf.
+# inertias format: [ixx, iyy, izz, ixy, ixz, iyz]
+# coms: origin of inertial frame in link's own frame.
+# ---------------------------------------------------------------------------
+link_inertials:
+  masses: [0.066982, 1.0795, 0.54534, 0.11714, 0.63488, 0.44089]
+  coms:
+    - [0.0054231, -0.0080289, 0.017086]
+    - [-0.13237, 0.0020852, 0.00010549]
+    - [0.18531, 0.00068376, -0.051638]
+    - [0.040231, 0.0044807, -0.035335]
+    - [0.003612, -1.5455e-05, 0.055214]
+    - [0.041697, 2.4368e-05, 0.00014464]
+  inertias:
+    - [0.00008, 0.00003, 0.00008, 0.00000, 0.00001, 0.00000]
+    - [0.00051, 0.01599, 0.01605, 0.00001, -0.00004, 0.00000]
+    - [0.00036, 0.00423, 0.00420, -0.00003, -0.00039, 0.00001]
+    - [0.00019, 0.00023, 0.00014, -0.00002, -0.00009, 0.00002]
+    - [0.00083, 0.00082, 0.00026, 0.00000, 0.00007, 0.00000]
+    - [0.00038, 0.00028, 0.00050, 0.00000, 0.00000, 0.00000]
