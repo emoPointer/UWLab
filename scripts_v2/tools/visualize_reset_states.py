@@ -48,6 +48,7 @@ import inspect
 from isaaclab.envs import ManagerBasedRLEnv
 from isaaclab.managers import ManagerTermBase
 
+from gripper_visualization_utils import resolve_gripper_joint_indices
 from uwlab_tasks.utils.hydra import hydra_task_compose
 
 torch.backends.cuda.matmul.allow_tf32 = True
@@ -97,12 +98,25 @@ def main(env_cfg, agent_cfg) -> None:
     with contextlib.suppress(KeyboardInterrupt):
         while True:
             asset = env.unwrapped.scene["robot"]
-            # specific for robotiq
-            gripper_joint_positions = asset.data.joint_pos[:, asset.find_joints(["finger_joint"])[0][0]]
-            gripper_closed_fraction = (
-                torch.abs(gripper_joint_positions) / env_cfg.actions.gripper.close_command_expr["finger_joint"]
+            gripper_joint_ids = resolve_gripper_joint_indices(
+                asset.joint_names, env_cfg.actions.gripper.close_command_expr
             )
-            gripper_mask = gripper_closed_fraction > 0.1
+            gripper_joint_names = [asset.joint_names[i] for i in gripper_joint_ids]
+            gripper_joint_positions = asset.data.joint_pos[:, gripper_joint_ids]
+            close_command = torch.tensor(
+                [env_cfg.actions.gripper.close_command_expr[name] for name in gripper_joint_names],
+                device=env.device,
+                dtype=gripper_joint_positions.dtype,
+            )
+            open_command = torch.tensor(
+                [env_cfg.actions.gripper.open_command_expr[name] for name in gripper_joint_names],
+                device=env.device,
+                dtype=gripper_joint_positions.dtype,
+            )
+            gripper_mask = (
+                torch.norm(gripper_joint_positions - close_command, dim=1)
+                < torch.norm(gripper_joint_positions - open_command, dim=1)
+            )
             # Step the simulation
             for _ in range(5):
                 action = torch.zeros(env.action_space.shape, device=env.device, dtype=torch.float32)
