@@ -34,7 +34,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
+from uwlab_assets import UWLAB_ASSETS_EXT_DIR, UWLAB_CLOUD_ASSETS_DIR
 from uwlab_assets.robots.arx5 import EXPLICIT_ARX5, IMPLICIT_ARX5
 
 from uwlab_tasks.manager_based.manipulation.omnireset.config.arx5.actions import (
@@ -91,10 +91,11 @@ class RlStateSceneCfg(InteractiveSceneCfg):
     # Environment — no ur5_metal_support needed for ARX5
     table = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, -0.881), rot=(0.707, 0.0, 0.0, -0.707)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.799375), rot=(1.0, 0.0, 0.0, 0.0)),
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/Mounts/UWPatVention/pat_vention.usd",
+            usd_path=f"{UWLAB_ASSETS_EXT_DIR}/uwlab_assets/props/robosuite_table/table.usd",
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
         ),
     )
 
@@ -272,6 +273,30 @@ class TrainEvalEventCfg(BaseEventCfg):
             "reset_types": ["ObjectAnywhereEEAnywhere"],
             "probs": [1.0],
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+        },
+    )
+
+
+@configclass
+class DeployEvalEventCfg(TrainEvalEventCfg):
+    """Deployment play events: reset robot and peg from data, keep peghole in front of the robot."""
+
+    align_deploy_scene_to_robosuite_table = EventTerm(
+        func=task_mdp.align_deploy_scene_to_robosuite_table,
+        mode="reset",
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "table_cfg": SceneEntityCfg("table"),
+            "training_robot_base_pose": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+            "robosuite_robot_base_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
+            "table_pose": (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0),
+            "receptive_object_pose": (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0),
+            "workspace_x_range": (-0.4, -0.2),
+            "workspace_y_range": (-0.3, -0.1),
+            "log_once": True,
+            "log_every_reset": True,
         },
     )
 
@@ -743,6 +768,18 @@ class Arx5OSCFinetuneCfg(Arx5RlStateCfg):
 class Arx5OSCEvalCfg(Arx5RlStateCfg):
     events: TrainEvalEventCfg = TrainEvalEventCfg()
     actions: Arx5OSCTrainAction = Arx5OSCTrainAction()
+
+
+@configclass
+class Arx5OSCDeployEvalCfg(Arx5OSCEvalCfg):
+    events: DeployEvalEventCfg = DeployEvalEventCfg()
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(0.45, -1.15, 1.35),
+        lookat=(-0.30, -0.20, 0.84),
+        origin_type="world",
+        env_index=0,
+        asset_name="receptive_object",
+    )
 
 
 # Eval after Stage 2

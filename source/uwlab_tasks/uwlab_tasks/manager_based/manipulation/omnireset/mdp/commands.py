@@ -97,8 +97,14 @@ class TaskCommand(TaskDependentCommand):
             pos=tuple(receptive_meta.get("assembled_offset").get("pos")),
             quat=tuple(receptive_meta.get("assembled_offset").get("quat")),
         )
-        self.success_position_threshold: float = receptive_meta.get("success_thresholds").get("position")
-        self.success_orientation_threshold: float = receptive_meta.get("success_thresholds").get("orientation")
+        if cfg.success_threshold_scale <= 0.0:
+            raise ValueError(f"success_threshold_scale must be positive, got {cfg.success_threshold_scale}")
+        self.success_position_threshold: float = (
+            receptive_meta.get("success_thresholds").get("position") * cfg.success_threshold_scale
+        )
+        self.success_orientation_threshold: float = (
+            receptive_meta.get("success_thresholds").get("orientation") * cfg.success_threshold_scale
+        )
 
         self.metrics["average_rot_align_error"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["average_pos_align_error"] = torch.zeros(self.num_envs, device=self.device)

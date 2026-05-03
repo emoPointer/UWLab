@@ -1197,6 +1197,192 @@ def sample_from_nested_dict(nested_dict: dict, idx) -> dict:
     return sampled_dict
 
 
+def _nearest_xformable_prim(prim):
+    """Return the nearest ancestor that can receive xform ops."""
+    current = prim
+    while current.IsValid():
+        if UsdGeom.Xformable(current):
+            return current
+        current = current.GetParent()
+    return prim
+
+
+def _sync_rigid_root_visual_pose(asset: RigidObject, root_pose: torch.Tensor, env_ids: torch.Tensor) -> None:
+    """Mirror a PhysX rigid root pose write back to the USD/Fabric-visible root prims."""
+    stage = omni.usd.get_context().get_stage()
+    root_prim_paths = asset.root_physx_view.prim_paths
+    for env_id, pose in zip(env_ids.detach().cpu().tolist(), root_pose.detach().cpu().tolist()):
+        prim = stage.GetPrimAtPath(root_prim_paths[env_id])
+        if not prim.IsValid():
+            logging.warning("[UWLab deploy] failed to sync visual pose; missing prim: %s", root_prim_paths[env_id])
+            continue
+        prim = _nearest_xformable_prim(prim)
+        local_pos, local_quat = sim_utils.convert_world_pose_to_local(
+            tuple(float(value) for value in pose[:3]),
+            tuple(float(value) for value in pose[3:]),
+            ref_prim=prim.GetParent(),
+        )
+        sim_utils.standardize_xform_ops(prim, translation=local_pos, orientation=local_quat)
+
+
+def fix_receptive_object_pose(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    asset_cfg: SceneEntityCfg,
+    pose: tuple[float, float, float, float, float, float, float],
+    log_once: bool = False,
+) -> None:
+    """Set a kinematic receptive object to a fixed pose after reset-state sampling."""
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    root_pose = torch.tensor(pose, dtype=torch.float32, device=env.device).repeat(len(env_ids), 1)
+    root_pose[:, :3] += env.scene.env_origins[env_ids]
+    asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+    asset.write_root_velocity_to_sim(
+        torch.zeros((len(env_ids), 6), dtype=torch.float32, device=env.device), env_ids=env_ids
+    )
+    _sync_rigid_root_visual_pose(asset, root_pose, env_ids)
+    if log_once and not getattr(env, "_uwlab_logged_fixed_receptive_object_pose", False):
+        env._uwlab_logged_fixed_receptive_object_pose = True
+        local_pose = root_pose[0].detach().cpu().tolist()
+        logging.info(
+            "[UWLab deploy] fixed %s root pose for env0: %s",
+            asset_cfg.name,
+            [round(value, 4) for value in local_pose],
+        )
+
+
+def _pose_tensor(
+    pose: tuple[float, float, float, float, float, float, float], env: ManagerBasedEnv, env_ids: torch.Tensor
+) -> torch.Tensor:
+    root_pose = torch.tensor(pose, dtype=torch.float32, device=env.device).repeat(len(env_ids), 1)
+    root_pose[:, :3] += env.scene.env_origins[env_ids]
+    return root_pose
+
+
+def _sync_articulation_root_visual_pose(asset: Articulation, root_pose: torch.Tensor, env_ids: torch.Tensor) -> None:
+    """Mirror a PhysX articulation root pose write back to the USD/Fabric-visible root prims."""
+    stage = omni.usd.get_context().get_stage()
+    root_prim_paths = asset.root_physx_view.prim_paths
+    for env_id, pose in zip(env_ids.detach().cpu().tolist(), root_pose.detach().cpu().tolist()):
+        prim = stage.GetPrimAtPath(root_prim_paths[env_id])
+        if not prim.IsValid():
+            logging.warning("[UWLab deploy] failed to sync robot visual pose; missing prim: %s", root_prim_paths[env_id])
+            continue
+        prim = _nearest_xformable_prim(prim)
+        local_pos, local_quat = sim_utils.convert_world_pose_to_local(
+            tuple(float(value) for value in pose[:3]),
+            tuple(float(value) for value in pose[3:]),
+            ref_prim=prim.GetParent(),
+        )
+        sim_utils.standardize_xform_ops(prim, translation=local_pos, orientation=local_quat)
+
+
+def _write_articulation_root_pose_with_visual_sync(
+    asset: Articulation, root_pose: torch.Tensor, env_ids: torch.Tensor
+) -> None:
+    asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+    asset.write_root_velocity_to_sim(
+        torch.zeros((len(env_ids), 6), dtype=torch.float32, device=root_pose.device), env_ids=env_ids
+    )
+    _sync_articulation_root_visual_pose(asset, root_pose, env_ids)
+
+
+def _write_rigid_root_pose_with_visual_sync(asset: RigidObject, root_pose: torch.Tensor, env_ids: torch.Tensor) -> None:
+    asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+    asset.write_root_velocity_to_sim(
+        torch.zeros((len(env_ids), 6), dtype=torch.float32, device=root_pose.device), env_ids=env_ids
+    )
+    _sync_rigid_root_visual_pose(asset, root_pose, env_ids)
+
+
+def align_deploy_scene_to_robosuite_table(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    robot_cfg: SceneEntityCfg,
+    insertive_object_cfg: SceneEntityCfg,
+    receptive_object_cfg: SceneEntityCfg,
+    table_cfg: SceneEntityCfg,
+    training_robot_base_pose: tuple[float, float, float, float, float, float, float],
+    robosuite_robot_base_pose: tuple[float, float, float, float, float, float, float],
+    table_pose: tuple[float, float, float, float, float, float, float],
+    receptive_object_pose: tuple[float, float, float, float, float, float, float],
+    workspace_x_range: Sequence[float] | None = None,
+    workspace_y_range: Sequence[float] | None = None,
+    log_once: bool = False,
+    log_every_reset: bool = False,
+) -> None:
+    """Move deploy-only reset states onto the robosuite Lift table coordinate frame."""
+    if env_ids is None:
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if (workspace_x_range is None) != (workspace_y_range is None):
+        raise ValueError("workspace_x_range and workspace_y_range must be provided together.")
+
+    robot: Articulation = env.scene[robot_cfg.name]
+    insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
+    receptive_object: RigidObject = env.scene[receptive_object_cfg.name]
+    table: RigidObject = env.scene[table_cfg.name]
+
+    source_pose = _pose_tensor(training_robot_base_pose, env, env_ids)
+    target_pose = _pose_tensor(robosuite_robot_base_pose, env, env_ids)
+    translation_delta = target_pose[:, :3] - source_pose[:, :3]
+
+    robot_pose = robot.data.root_pose_w[env_ids].clone()
+    robot_pose[:, :3] += translation_delta
+    robot_pose[:, 3:7] = target_pose[:, 3:7]
+    _write_articulation_root_pose_with_visual_sync(robot, robot_pose, env_ids)
+
+    insertive_pose = insertive_object.data.root_pose_w[env_ids].clone()
+    insertive_pose[:, :3] += translation_delta
+    receptive_pose_after_base_align = receptive_object.data.root_pose_w[env_ids].clone()
+    receptive_pose_after_base_align[:, :3] += translation_delta
+
+    table_root_pose = _pose_tensor(table_pose, env, env_ids)
+    _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids)
+
+    receptive_root_pose = _pose_tensor(receptive_object_pose, env, env_ids)
+    if workspace_x_range is not None and workspace_y_range is not None:
+        x_min, x_max = workspace_x_range
+        y_min, y_max = workspace_y_range
+        receptive_root_pose[:, 0] = env.scene.env_origins[env_ids, 0] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(x_min), float(x_max))
+        receptive_root_pose[:, 1] = env.scene.env_origins[env_ids, 1] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(y_min), float(y_max))
+
+    object_delta = receptive_root_pose[:, :3] - receptive_pose_after_base_align[:, :3]
+    insertive_pose[:, :3] += object_delta
+    _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids)
+    _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids)
+
+    env.scene.write_data_to_sim()
+
+    if log_every_reset:
+        reset_count = getattr(env, "_uwlab_deploy_reset_count", 0) + 1
+        env._uwlab_deploy_reset_count = reset_count
+        env0_pose = receptive_root_pose[0, :3].detach().cpu().tolist()
+        env0_insertive_pose = insertive_pose[0, :3].detach().cpu().tolist()
+        sim_step_count = getattr(env, "_sim_step_counter", None)
+        print(
+            "[UWLab deploy reset] "
+            f"count={reset_count} sim_step={sim_step_count} env_ids={env_ids.detach().cpu().tolist()} "
+            f"peghole_xyz={[round(value, 4) for value in env0_pose]} "
+            f"peg_xyz={[round(value, 4) for value in env0_insertive_pose]}",
+            flush=True,
+        )
+
+    if log_once and not getattr(env, "_uwlab_logged_robosuite_deploy_alignment", False):
+        env._uwlab_logged_robosuite_deploy_alignment = True
+        logging.info(
+            "[UWLab deploy] aligned to robosuite Lift table: robot=%s table=%s receptive=%s",
+            [round(value, 4) for value in robot_pose[0, :7].detach().cpu().tolist()],
+            [round(value, 4) for value in table_root_pose[0, :7].detach().cpu().tolist()],
+            [round(value, 4) for value in receptive_root_pose[0, :7].detach().cpu().tolist()],
+        )
+
+
 class reset_root_states_uniform(ManagerTermBase):
     """Reset multiple assets' root states to random positions and velocities uniformly within given ranges.
 

@@ -44,7 +44,12 @@ ARX5_OSC_TRAIN = mdp.OperationalSpaceControllerActionCfg(
         # Soft gains for training — curriculum can ramp to stiff later
         motion_stiffness_task=(200.0, 200.0, 200.0, 3.0, 3.0, 3.0),
         motion_damping_ratio_task=(3.0, 3.0, 3.0, 1.0, 1.0, 1.0),
-        gravity_compensation=True,
+        # ARX5 robot bodies have disable_gravity=True (zero-G).  IsaacLab's OSC
+        # adds gravity-compensation torques unconditionally when this is True,
+        # producing a phantom upward force that drifts the arm during actions=0
+        # (data-collection settle, idle, etc.).  Must stay False to match the
+        # zero-G robot.
+        gravity_compensation=False,
         inertial_dynamics_decoupling=True,
         nullspace_control="none",
     ),
@@ -64,7 +69,8 @@ ARX5_OSC_EVAL = mdp.OperationalSpaceControllerActionCfg(
         motion_control_axes_task=(1, 1, 1, 1, 1, 1),
         motion_stiffness_task=(1000.0, 1000.0, 1000.0, 50.0, 50.0, 50.0),
         motion_damping_ratio_task=(1.0, 1.0, 1.0, 1.0, 1.0, 1.0),
-        gravity_compensation=True,
+        # See ARX5_OSC_TRAIN: zero-G robot, no gravity to compensate.
+        gravity_compensation=False,
         inertial_dynamics_decoupling=True,
         nullspace_control="none",
     ),

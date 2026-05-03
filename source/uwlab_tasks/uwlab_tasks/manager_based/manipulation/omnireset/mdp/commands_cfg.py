@@ -29,3 +29,5 @@ class TaskCommandCfg(TaskDependentCommandCfg):
     insertive_asset_cfg: SceneEntityCfg = MISSING
 
     receptive_asset_cfg: SceneEntityCfg = MISSING
+
+    success_threshold_scale: float = 1.0
