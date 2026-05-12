@@ -155,6 +155,20 @@ def get_material_properties(
     return asset.root_physx_view.get_material_properties().view(env.num_envs, -1)
 
 
+def get_material_properties_compat(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg,
+    output_dim: int,
+):
+    material_properties = get_material_properties(env, asset_cfg)
+    if material_properties.shape[1] > output_dim:
+        return material_properties[:, :output_dim]
+    if material_properties.shape[1] < output_dim:
+        repeats = (output_dim + material_properties.shape[1] - 1) // material_properties.shape[1]
+        return material_properties.repeat(1, repeats)[:, :output_dim]
+    return material_properties
+
+
 def get_mass(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg,

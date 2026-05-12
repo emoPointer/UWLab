@@ -61,14 +61,78 @@ simulation_app = app_launcher.app
 
 import contextlib
 import os
+import xml.etree.ElementTree as ET
 
 import carb
 import isaacsim.core.utils.stage as stage_utils
 import omni.kit.app
+from pxr import Gf, Usd, UsdGeom
 
 from isaaclab.sim.converters import MjcfConverter, MjcfConverterCfg
 from isaaclab.utils.assets import check_file_path
 from isaaclab.utils.dict import print_dict
+
+
+def _parse_float_tuple(value: str | None, default: tuple[float, ...]) -> tuple[float, ...]:
+    if value is None:
+        return default
+    return tuple(float(item) for item in value.split())
+
+
+def _add_camera_only_links(mjcf_path: str, usd_path: str):
+    """Preserve MJCF bodies that only serve as camera/link anchors.
+
+    Isaac's MJCF importer may put the body transform on a repeated child body, leaving the user-facing
+    anchor Xform at the origin.  For deploy camera alignment we keep the anchor itself active and put the
+    MJCF body transform directly on that Xform.  The actual Camera prim can then be authored manually under it.
+    """
+
+    tree = ET.parse(mjcf_path)
+    camera_link_bodies = [
+        body for body in tree.getroot().findall(".//body") if _is_camera_anchor_body(body)
+    ]
+    if not camera_link_bodies:
+        return
+
+    stage = Usd.Stage.Open(usd_path)
+    if stage is None:
+        raise RuntimeError(f"Failed to open generated USD for camera-link patching: {usd_path}")
+
+    default_prim = stage.GetDefaultPrim()
+    if not default_prim:
+        root_prims = [prim for prim in stage.GetPseudoRoot().GetChildren() if prim.IsA(UsdGeom.Xform)]
+        if not root_prims:
+            raise RuntimeError(f"Failed to find a root Xform in generated USD: {usd_path}")
+        default_prim = root_prims[0]
+
+    for body in camera_link_bodies:
+        body_name = body.get("name")
+        external_cam_path = default_prim.GetPath().AppendChild(body_name)
+        xform = UsdGeom.Xform.Define(stage, external_cam_path)
+        xform.GetPrim().SetActive(True)
+        xformable = UsdGeom.Xformable(xform.GetPrim())
+        xformable.ClearXformOpOrder()
+        pos = _parse_float_tuple(body.get("pos"), (0.0, 0.0, 0.0))
+        quat = _parse_float_tuple(body.get("quat"), (1.0, 0.0, 0.0, 0.0))
+        xformable.AddTranslateOp().Set(Gf.Vec3d(*pos))
+        xformable.AddOrientOp().Set(Gf.Quatf(quat[0], quat[1], quat[2], quat[3]))
+
+        duplicate_body_path = external_cam_path.AppendChild(body_name)
+        if stage.GetPrimAtPath(duplicate_body_path):
+            stage.OverridePrim(duplicate_body_path).SetActive(False)
+
+        old_world_body_anchor_path = default_prim.GetPath().AppendChild("worldBody").AppendChild(body_name)
+        if stage.GetPrimAtPath(old_world_body_anchor_path):
+            stage.RemovePrim(old_world_body_anchor_path)
+
+    stage.GetRootLayer().Save()
+
+
+def _is_camera_anchor_body(body: ET.Element) -> bool:
+    body_name = body.get("name")
+    if not body_name or body.find("geom") is not None:
+        return False
+    return body.find("camera") is not None or "cam" in body_name.lower()
 
 
 def main():
@@ -105,6 +169,7 @@ def main():
 
     # Create mjcf converter and import the file
     mjcf_converter = MjcfConverter(mjcf_converter_cfg)
+    _add_camera_only_links(mjcf_path, mjcf_converter.usd_path)
     # print output
     print("MJCF importer output:")
     print(f"Generated USD file: {mjcf_converter.usd_path}")

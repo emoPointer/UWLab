@@ -28,7 +28,7 @@ from isaaclab.scene import InteractiveSceneCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
-from uwlab_assets import UWLAB_CLOUD_ASSETS_DIR
+from uwlab_assets import UWLAB_ASSETS_EXT_DIR, UWLAB_CLOUD_ASSETS_DIR
 from uwlab_assets.robots.arx5 import IMPLICIT_ARX5
 
 from uwlab_tasks.manager_based.manipulation.omnireset.config.arx5.actions import Arx5OSCTrainAction
@@ -79,10 +79,11 @@ class ResetStatesSceneCfg(InteractiveSceneCfg):
     # Environment
     table = RigidObjectCfg(
         prim_path="{ENV_REGEX_NS}/Table",
-        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.4, 0.0, -0.881), rot=(0.707, 0.0, 0.0, -0.707)),
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(0.0, 0.0, 0.799375), rot=(1.0, 0.0, 0.0, 0.0)),
         spawn=sim_utils.UsdFileCfg(
-            usd_path=f"{UWLAB_CLOUD_ASSETS_DIR}/Props/Mounts/UWPatVention/pat_vention.usd",
+            usd_path=f"{UWLAB_ASSETS_EXT_DIR}/uwlab_assets/props/robosuite_table/table.usd",
             rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            articulation_props=sim_utils.ArticulationRootPropertiesCfg(articulation_enabled=False),
         ),
     )
 
@@ -152,9 +153,9 @@ class ResetStatesBaseEventCfg:
         mode="reset",
         params={
             "pose_range": {
-                "x": (-0.01, 0.01),
-                "y": (-0.01, 0.01),
-                "z": (-0.01, 0.01),
+                "x": (-0.545, -0.525),
+                "y": (-0.22, -0.20),
+                "z": (0.79, 0.81),
                 "roll": (0.0, 0.0),
                 "pitch": (0.0, 0.0),
                 "yaw": (0.0, 0.0),
@@ -169,9 +170,9 @@ class ResetStatesBaseEventCfg:
         mode="reset",
         params={
             "pose_range": {
-                "x": (0.3, 0.55),
-                "y": (-0.1, 0.3),
-                "z": (0.0, 0.0),
+                "x": (-0.4, -0.2),
+                "y": (-0.3, -0.1),
+                "z": (0.84, 0.84),
                 "roll": (0.0, 0.0),
                 "pitch": (0.0, 0.0),
                 "yaw": (-np.pi / 12, np.pi / 12),
@@ -189,9 +190,9 @@ class ObjectAnywhereEEAnywhereEventCfg(ResetStatesBaseEventCfg):
         mode="reset",
         params={
             "pose_range": {
-                "x": (0.3, 0.55),
-                "y": (-0.1, 0.5),
-                "z": (0.0, 0.3),
+                "x": (-0.4, -0.2),
+                "y": (-0.3, -0.1),
+                "z": (0.84, 1.14),
                 "roll": (-np.pi, np.pi),
                 "pitch": (-np.pi, np.pi),
                 "yaw": (-np.pi, np.pi),
@@ -263,9 +264,9 @@ class ObjectAnywhereEEGraspedEventCfg(ResetStatesBaseEventCfg):
         mode="reset",
         params={
             "pose_range": {
-                "x": (0.3, 0.55),
-                "y": (-0.1, 0.3),
-                "z": (0.0, 0.3),
+                "x": (-0.4, -0.2),
+                "y": (-0.3, -0.1),
+                "z": (0.84, 1.14),
                 "roll": (-np.pi, np.pi),
                 "pitch": (-np.pi, np.pi),
                 "yaw": (-np.pi, np.pi),

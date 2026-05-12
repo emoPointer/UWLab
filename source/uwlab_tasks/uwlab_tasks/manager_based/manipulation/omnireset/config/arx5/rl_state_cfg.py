@@ -31,6 +31,7 @@ from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.scene import InteractiveSceneCfg
+from isaaclab.sensors import TiledCameraCfg
 from isaaclab.utils import configclass
 from isaaclab.utils.assets import ISAAC_NUCLEUS_DIR
 
@@ -43,6 +44,13 @@ from uwlab_tasks.manager_based.manipulation.omnireset.config.arx5.actions import
 )
 
 from ... import mdp as task_mdp
+
+
+ROBOSUITE_CAMERA_WIDTH = 640
+ROBOSUITE_CAMERA_HEIGHT = 480
+
+ROBOSUITE_WRIST_CAMERA_POS = (0.0, 0.0, 0.0)
+ROBOSUITE_WRIST_CAMERA_ROT = (1.0, 0.0, 0.0, 0.0)
 
 
 # ============================================================================
@@ -110,6 +118,63 @@ class RlStateSceneCfg(InteractiveSceneCfg):
         spawn=sim_utils.DomeLightCfg(
             intensity=1000.0,
             texture_file=f"{ISAAC_NUCLEUS_DIR}/Materials/Textures/Skies/PolyHaven/kloofendal_43d_clear_puresky_4k.hdr",
+        ),
+    )
+
+
+@configclass
+class DeployRlStateSceneCfg(RlStateSceneCfg):
+    """Deploy scene with project-style visual-only backdrop curtains."""
+
+    external_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Table/external_cam/Camera",
+        update_period=0,
+        height=ROBOSUITE_CAMERA_HEIGHT,
+        width=ROBOSUITE_CAMERA_WIDTH,
+        data_types=["rgb"],
+        spawn=None,
+    )
+
+    wrist_camera = TiledCameraCfg(
+        prim_path="{ENV_REGEX_NS}/Robot/camera/Camera",
+        update_period=0,
+        height=ROBOSUITE_CAMERA_HEIGHT,
+        width=ROBOSUITE_CAMERA_WIDTH,
+        data_types=["rgb"],
+        spawn=None,
+    )
+
+    # Match the robosuite-style table-relative backdrop layout, but keep the backdrop as thin visual-only panels.
+    curtain_back = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/CurtainBack",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-1.1, 0.0, 0.519), rot=(1.0, 0.0, 0.0, 0.0)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 1.6, 2.125),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.72, 0.72, 0.70)),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+        ),
+    )
+
+    curtain_left = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/CurtainLeft",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.05, 0.8, 0.519), rot=(0.707, 0.0, 0.0, -0.707)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 2.1, 2.125),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.72, 0.72, 0.70)),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
+        ),
+    )
+
+    curtain_right = RigidObjectCfg(
+        prim_path="{ENV_REGEX_NS}/CurtainRight",
+        init_state=RigidObjectCfg.InitialStateCfg(pos=(-0.05, -0.8, 0.519), rot=(0.707, 0.0, 0.0, -0.707)),
+        spawn=sim_utils.CuboidCfg(
+            size=(0.01, 2.1, 2.125),
+            rigid_props=sim_utils.RigidBodyPropertiesCfg(kinematic_enabled=True),
+            visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.72, 0.72, 0.70)),
+            collision_props=sim_utils.CollisionPropertiesCfg(collision_enabled=False),
         ),
     )
 
@@ -289,21 +354,71 @@ class DeployEvalEventCfg(TrainEvalEventCfg):
             "insertive_object_cfg": SceneEntityCfg("insertive_object"),
             "receptive_object_cfg": SceneEntityCfg("receptive_object"),
             "table_cfg": SceneEntityCfg("table"),
-            "training_robot_base_pose": (0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0),
+            "training_robot_base_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
             "robosuite_robot_base_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
             "table_pose": (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0),
             "receptive_object_pose": (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0),
+            "robot_xy_jitter_m": 0.02,
             "workspace_x_range": (-0.4, -0.2),
             "workspace_y_range": (-0.3, -0.1),
+            "task_object_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+            "backdrop_asset_names": (
+                "curtain_back",
+                "curtain_left",
+                "curtain_right",
+            ),
+            "backdrop_table_relative_poses": (
+                (-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0),
+                (-0.05, 0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+                (-0.05, -0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+            ),
+            "backdrop_position_jitter_m": 0.02,
+            "backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+            "external_camera_table_relative_pose": (0.517, 0.327, 0.589, 0.3604, 0.2030, 0.5000, 0.7609),
             "log_once": True,
             "log_every_reset": True,
         },
     )
 
+    reject_initial_successful_resets = EventTerm(
+        func=task_mdp.RejectInitialAssemblySuccessReset,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "reset_event_name": "reset_from_reset_states",
+            "align_event_name": "align_deploy_scene_to_robosuite_table",
+            "max_resample_attempts": 20,
+            "log_rejections": True,
+        },
+    )
+
 
 @configclass
-class FinetuneEventCfg(TrainEventCfg):
-    """Finetune events: curriculum-ramped sysid + 4-path resets. Explicit actuator."""
+class FinetuneEventCfg(BaseEventCfg):
+    """Finetune events: fixed robot reset, workspace object reset, curriculum-ramped sysid."""
+
+    reset_from_reset_states = EventTerm(
+        func=task_mdp.FixedRobotWorkspaceTaskPairReset,
+        mode="reset",
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "table_cfg": SceneEntityCfg("table"),
+            "robot_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
+            "table_pose": (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0),
+            "insertive_object_pose": (-0.30, -0.20, 0.87, 1.0, 0.0, 0.0, 0.0),
+            "receptive_object_pose": (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0),
+            "workspace_x_range": (-0.4, -0.2),
+            "workspace_y_range": (-0.3, -0.1),
+            "insertive_workspace_x_range": (-0.4, -0.2),
+            "insertive_workspace_y_range": (-0.3, -0.1),
+            "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+            "log_every_reset": False,
+            "sync_visuals": False,
+        },
+    )
 
     randomize_arm_sysid = EventTerm(
         func=task_mdp.randomize_arm_from_sysid,
@@ -506,7 +621,8 @@ class ObservationsCfg:
         )
 
         table_material_properties = ObsTerm(
-            func=task_mdp.get_material_properties, params={"asset_cfg": SceneEntityCfg("table")}
+            func=task_mdp.get_material_properties_compat,
+            params={"asset_cfg": SceneEntityCfg("table"), "output_dim": 21},
         )
 
         robot_mass = ObsTerm(func=task_mdp.get_mass, params={"asset_cfg": SceneEntityCfg("robot")})
@@ -600,6 +716,16 @@ class TerminationsCfg:
     time_out = DoneTerm(func=task_mdp.time_out, time_out=True)
 
     abnormal_robot = DoneTerm(func=task_mdp.abnormal_robot_state)
+
+
+@configclass
+class DeployTerminationsCfg(TerminationsCfg):
+    """Deployment rollouts end shortly after stable assembly success."""
+
+    success = DoneTerm(
+        func=task_mdp.consecutive_success_state_with_min_length,
+        params={"num_consecutive_successes": 10, "min_episode_length": 10},
+    )
 
 
 # ============================================================================
@@ -772,7 +898,9 @@ class Arx5OSCEvalCfg(Arx5RlStateCfg):
 
 @configclass
 class Arx5OSCDeployEvalCfg(Arx5OSCEvalCfg):
+    scene: DeployRlStateSceneCfg = DeployRlStateSceneCfg(num_envs=32, env_spacing=1.5)
     events: DeployEvalEventCfg = DeployEvalEventCfg()
+    terminations: DeployTerminationsCfg = DeployTerminationsCfg()
     viewer: ViewerCfg = ViewerCfg(
         eye=(0.45, -1.15, 1.35),
         lookat=(-0.30, -0.20, 0.84),

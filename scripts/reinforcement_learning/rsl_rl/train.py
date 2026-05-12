@@ -36,6 +36,18 @@ parser.add_argument(
     help="Direct path to a checkpoint file to resume from (bypasses log directory search).",
 )
 parser.add_argument(
+    "--freeze_noise_std",
+    action="store_true",
+    default=False,
+    help="Freeze the RSL-RL policy action noise std during training.",
+)
+parser.add_argument(
+    "--fixed_noise_std",
+    type=float,
+    default=0.35,
+    help="Action noise std value used when --freeze_noise_std is enabled.",
+)
+parser.add_argument(
     "--ray-proc-id", "-rid", type=int, default=None, help="Automatically configured by Ray integration, otherwise None."
 )
 # append RSL-RL cli arguments
@@ -103,6 +115,7 @@ import isaaclab_tasks  # noqa: F401
 import uwlab_tasks  # noqa: F401
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils import get_checkpoint_path
+from play_checkpoint_utils import freeze_runner_action_noise, load_runner_checkpoint_for_training
 from uwlab_tasks.utils.hydra import hydra_task_config
 
 # import logger
@@ -215,7 +228,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
-        runner.load(resume_path)
+        load_runner_checkpoint_for_training(runner, resume_path)
+    if args_cli.freeze_noise_std:
+        freeze_runner_action_noise(runner, args_cli.fixed_noise_std)
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

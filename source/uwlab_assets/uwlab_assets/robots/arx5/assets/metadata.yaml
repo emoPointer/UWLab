@@ -12,7 +12,7 @@
 # pos: finger joints are at ~0.087m in +X from link6 origin
 # quat: identity (link6 is the EE body itself)
 gripper_offset:
-  pos: [0.11306, 0.0, 0.0]
+  pos: [0.145, 0.0, 0.0]
   quat: [1.0, 0.0, 0.0, 0.0]
 
 # Gripper geometry parameters

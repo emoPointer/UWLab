@@ -1,0 +1,28 @@
+<mujoco model="robosuite_table_only">
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="table_silver" rgba="0.75 0.75 0.72 1" reflectance="0.15" shininess="0.35" specular="0.5"/>
+
+    <texture file="configuration/materials/steel-brushed.png" type="cube" name="tex-steel-brushed"/>
+    <material name="table_legs_metal" reflectance="0.8" shininess="0.8" texrepeat="1 1" texture="tex-steel-brushed"/>
+
+    <texture name="textable" builtin="flat" height="512" width="512" rgb1="0.5 0.5 0.5" rgb2="0.5 0.5 0.5"/>
+    <material name="table_mat" texture="textable"/>
+  </asset>
+
+  <worldbody>
+    <body name="table" pos="0 0 0.775">
+      <geom pos="0 0 0" size="0.6 0.45 0.025" type="box" group="0" name="table_collision" friction="1 0.005 0.0001"/>
+      <geom pos="0 0 0" size="0.6 0.45 0.025" type="box" conaffinity="0" contype="0" group="1" name="table_visual" material="table_silver"/>
+      <site pos="0 0 0.025" name="table_top" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+
+      <geom pos="0.5 0.35 -0.3875" size="0.025 0.3875" type="cylinder" conaffinity="0" contype="0" group="1" name="table_leg1_visual" material="table_legs_metal"/>
+      <geom pos="-0.5 0.35 -0.3875" size="0.025 0.3875" type="cylinder" conaffinity="0" contype="0" group="1" name="table_leg2_visual" material="table_legs_metal"/>
+      <geom pos="-0.5 -0.35 -0.3875" size="0.025 0.3875" type="cylinder" conaffinity="0" contype="0" group="1" name="table_leg3_visual" material="table_legs_metal"/>
+      <geom pos="0.5 -0.35 -0.3875" size="0.025 0.3875" type="cylinder" conaffinity="0" contype="0" group="1" name="table_leg4_visual" material="table_legs_metal"/>
+    </body>
+
+    <body name="external_cam" pos="0.5170 0.3270 1.3640" quat="0.3604 0.2030 0.5000 0.7609"/>
+  </worldbody>
+</mujoco>

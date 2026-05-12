@@ -9,6 +9,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 
 from isaaclab.app import AppLauncher
 
@@ -34,14 +35,38 @@ parser.add_argument(
     help="Use the pre-trained checkpoint from Nucleus.",
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
+parser.add_argument(
+    "--print_actor_output",
+    action="store_true",
+    default=False,
+    help="Print the actor inference output during play.",
+)
+parser.add_argument(
+    "--print_actor_output_interval",
+    type=int,
+    default=20,
+    help="Number of play steps between actor output prints.",
+)
+parser.add_argument(
+    "--record_deploy_cameras_until_reset",
+    action="store_true",
+    default=False,
+    help="Record deploy camera videos and stop immediately after the first reset/done.",
+)
+parser.add_argument(
+    "--deploy_camera_output_dir",
+    type=str,
+    default=None,
+    help="Output directory for deploy camera recordings. Defaults under the run log dir.",
+)
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
 AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
-# always enable cameras to record video
-if args_cli.video:
+# always enable cameras when any rendering-dependent camera path is requested
+if args_cli.video or args_cli.record_deploy_cameras_until_reset:
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra
@@ -54,6 +79,7 @@ simulation_app = app_launcher.app
 """Rest everything follows."""
 
 import gymnasium as gym
+import imageio.v2 as imageio
 import os
 import time
 import torch
@@ -81,6 +107,27 @@ from play_checkpoint_utils import load_runner_checkpoint_for_play
 from uwlab_tasks.utils.hydra import hydra_task_config
 
 # PLACEHOLDER: Extension template (do not remove this comment)
+
+
+def _record_deploy_camera_frame(camera_recordings: dict[str, list], env, camera_names: tuple[str, ...], env_index: int = 0):
+    for camera_name in camera_names:
+        camera = env.unwrapped.scene.sensors.get(camera_name)
+        if camera is None:
+            continue
+        rgb = camera.data.output["rgb"][env_index, ..., :3].detach().cpu().numpy()
+        camera_recordings[camera_name].append(rgb)
+
+
+def _flush_deploy_camera_recordings(camera_recordings: dict[str, list], output_dir: Path, fps: float):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for camera_name, frames in camera_recordings.items():
+        if not frames:
+            continue
+        video_path = output_dir / f"{camera_name}.mp4"
+        with imageio.get_writer(video_path, fps=fps, codec="libx264", format="FFMPEG") as writer:
+            for frame in frames:
+                writer.append_data(frame)
+        print(f"[INFO] Saved deploy camera video: {video_path}")
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -180,10 +227,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     export_policy_as_onnx(policy_nn, normalizer=normalizer, path=export_model_dir, filename="policy.onnx")
 
     dt = env.unwrapped.step_dt
+    deploy_camera_names = ("external_camera", "wrist_camera")
+    record_deploy_cameras = args_cli.record_deploy_cameras_until_reset
+    deploy_camera_output_dir = None
+    camera_recordings = {name: [] for name in deploy_camera_names}
+    if record_deploy_cameras:
+        default_dir = Path(log_dir) / "videos" / "deploy_cameras"
+        deploy_camera_output_dir = Path(args_cli.deploy_camera_output_dir) if args_cli.deploy_camera_output_dir else default_dir
+        print(f"[INFO] Recording deploy cameras to: {deploy_camera_output_dir}")
 
     # reset environment
     obs = env.get_observations()
+    if record_deploy_cameras:
+        _record_deploy_camera_frame(camera_recordings, env, deploy_camera_names, env_index=0)
     timestep = 0
+    step_count = 0
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -191,10 +249,26 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         with torch.inference_mode():
             # agent stepping
             actions = policy(obs)
+            if args_cli.print_actor_output and step_count % args_cli.print_actor_output_interval == 0:
+                actions_cpu = actions.detach().cpu()
+                env0_action = actions_cpu[0].tolist()
+                print(
+                    "[actor output] "
+                    f"step={step_count} env0={[round(value, 6) for value in env0_action]} "
+                    f"min={actions_cpu.min().item():.6f} max={actions_cpu.max().item():.6f} "
+                    f"mean={actions_cpu.mean().item():.6f}",
+                    flush=True,
+                )
             # env stepping
             obs, _, dones, _ = env.step(actions)
+            if record_deploy_cameras:
+                _record_deploy_camera_frame(camera_recordings, env, deploy_camera_names, env_index=0)
             # reset recurrent states for episodes that have terminated
             policy_nn.reset(dones)
+            step_count += 1
+            if record_deploy_cameras and torch.any(dones):
+                _flush_deploy_camera_recordings(camera_recordings, deploy_camera_output_dir, fps=max(1.0, 1.0 / dt))
+                break
         if args_cli.video:
             timestep += 1
             # Exit the play loop after recording one video

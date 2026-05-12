@@ -26,7 +26,7 @@ from isaaclab.envs.mdp.actions.task_space_actions import DifferentialInverseKine
 from isaaclab.managers import EventTermCfg, ManagerTermBase, SceneEntityCfg
 from isaaclab.markers import VisualizationMarkers
 from isaaclab.markers.config import FRAME_MARKER_CFG
-from pxr import Gf, UsdGeom, UsdLux
+from pxr import Gf, UsdGeom, UsdLux, UsdShade
 
 from uwlab.envs.mdp.actions.actions_cfg import DifferentialInverseKinematicsActionCfg
 
@@ -1280,21 +1280,119 @@ def _sync_articulation_root_visual_pose(asset: Articulation, root_pose: torch.Te
 
 
 def _write_articulation_root_pose_with_visual_sync(
-    asset: Articulation, root_pose: torch.Tensor, env_ids: torch.Tensor
+    asset: Articulation, root_pose: torch.Tensor, env_ids: torch.Tensor, sync_visuals: bool = True
 ) -> None:
     asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
     asset.write_root_velocity_to_sim(
         torch.zeros((len(env_ids), 6), dtype=torch.float32, device=root_pose.device), env_ids=env_ids
     )
-    _sync_articulation_root_visual_pose(asset, root_pose, env_ids)
+    if sync_visuals:
+        _sync_articulation_root_visual_pose(asset, root_pose, env_ids)
 
 
-def _write_rigid_root_pose_with_visual_sync(asset: RigidObject, root_pose: torch.Tensor, env_ids: torch.Tensor) -> None:
+def _write_rigid_root_pose_with_visual_sync(
+    asset: RigidObject, root_pose: torch.Tensor, env_ids: torch.Tensor, sync_visuals: bool = True
+) -> None:
     asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
     asset.write_root_velocity_to_sim(
         torch.zeros((len(env_ids), 6), dtype=torch.float32, device=root_pose.device), env_ids=env_ids
     )
-    _sync_rigid_root_visual_pose(asset, root_pose, env_ids)
+    if sync_visuals:
+        _sync_rigid_root_visual_pose(asset, root_pose, env_ids)
+
+
+def _sync_sibling_xform_pose(
+    prim_path_template: str,
+    root_pose: torch.Tensor,
+    env_ids: torch.Tensor,
+    relative_pose: tuple[float, float, float, float, float, float, float] | None = None,
+    stage=None,
+) -> None:
+    """Mirror a world pose write to a sibling Xform prim that is not part of the PhysX rigid subtree."""
+    if stage is None:
+        stage = omni.usd.get_context().get_stage()
+    if relative_pose is not None:
+        relative_pose_tensor = torch.tensor(relative_pose, dtype=torch.float32, device=root_pose.device).repeat(
+            len(env_ids), 1
+        )
+        target_pos, target_quat = math_utils.combine_frame_transforms(
+            root_pose[:, :3], root_pose[:, 3:7], relative_pose_tensor[:, :3], relative_pose_tensor[:, 3:7]
+        )
+        target_pose = torch.cat((target_pos, target_quat), dim=-1)
+    else:
+        target_pose = root_pose
+    for env_id, pose in zip(env_ids.detach().cpu().tolist(), target_pose.detach().cpu().tolist()):
+        prim_path = prim_path_template.format(env_id=env_id)
+        prim = stage.GetPrimAtPath(prim_path)
+        if not prim.IsValid():
+            logging.warning("[UWLab deploy] failed to sync sibling xform pose; missing prim: %s", prim_path)
+            continue
+        prim = _nearest_xformable_prim(prim)
+        local_pos, local_quat = sim_utils.convert_world_pose_to_local(
+            tuple(float(value) for value in pose[:3]),
+            tuple(float(value) for value in pose[3:]),
+            ref_prim=prim.GetParent(),
+        )
+        xformable = UsdGeom.Xformable(prim)
+        translate_op = UsdGeom.XformOp(prim.GetAttribute("xformOp:translate"))
+        if not translate_op:
+            translate_op = xformable.AddTranslateOp(UsdGeom.XformOp.PrecisionDouble)
+        orient_op = UsdGeom.XformOp(prim.GetAttribute("xformOp:orient"))
+        if not orient_op:
+            orient_op = xformable.AddOrientOp(UsdGeom.XformOp.PrecisionDouble)
+
+        current_translate = translate_op.Get()
+        current_orient = orient_op.Get()
+        translate_value = type(current_translate)(*local_pos) if current_translate is not None else Gf.Vec3d(*local_pos)
+        orient_value = type(current_orient)(*local_quat) if current_orient is not None else Gf.Quatd(*local_quat)
+        translate_op.Set(translate_value)
+        orient_op.Set(orient_value)
+
+
+def _iter_prim_and_descendants(prim):
+    yield prim
+    for child in prim.GetChildren():
+        yield from _iter_prim_and_descendants(child)
+
+
+def _set_bound_material_color(prim, color: Gf.Vec3f) -> None:
+    try:
+        material, _ = UsdShade.MaterialBindingAPI(prim).ComputeBoundMaterial()
+    except Exception as exc:
+        logging.debug("[UWLab deploy] skipped bound material color update for %s: %s", prim.GetPath(), exc)
+        return
+
+    if material is None or not material.GetPrim().IsValid():
+        return
+
+    for material_prim in _iter_prim_and_descendants(material.GetPrim()):
+        shader = UsdShade.Shader(material_prim)
+        if not shader.GetPrim().IsValid():
+            continue
+        for input_name in ("diffuseColor", "diffuse_color_constant", "diffuse_color", "diffuse_tint"):
+            shader_input = shader.GetInput(input_name)
+            if shader_input and shader_input.GetAttr().IsValid():
+                shader_input.Set(color)
+
+
+def _set_rigid_root_visual_color(asset: RigidObject, colors: torch.Tensor, env_ids: torch.Tensor) -> None:
+    stage = omni.usd.get_context().get_stage()
+    root_prim_paths = asset.root_physx_view.prim_paths
+    for env_id, color in zip(env_ids.detach().cpu().tolist(), colors.detach().cpu().tolist()):
+        root_prim = stage.GetPrimAtPath(root_prim_paths[env_id])
+        if not root_prim.IsValid():
+            logging.warning("[UWLab deploy] failed to randomize backdrop color; missing prim: %s", root_prim_paths[env_id])
+            continue
+
+        color_vec = Gf.Vec3f(float(color[0]), float(color[1]), float(color[2]))
+        for prim in _iter_prim_and_descendants(root_prim):
+            if prim.IsA(UsdGeom.Gprim):
+                gprim = UsdGeom.Gprim(prim)
+                display_color_attr = gprim.GetDisplayColorAttr()
+                if not display_color_attr or not display_color_attr.IsValid():
+                    display_color_attr = gprim.CreateDisplayColorAttr()
+                display_color_attr.Set([color_vec])
+            _set_bound_material_color(prim, color_vec)
 
 
 def align_deploy_scene_to_robosuite_table(
@@ -1308,8 +1406,17 @@ def align_deploy_scene_to_robosuite_table(
     robosuite_robot_base_pose: tuple[float, float, float, float, float, float, float],
     table_pose: tuple[float, float, float, float, float, float, float],
     receptive_object_pose: tuple[float, float, float, float, float, float, float],
+    robot_xy_jitter_m: float = 0.0,
     workspace_x_range: Sequence[float] | None = None,
     workspace_y_range: Sequence[float] | None = None,
+    task_object_color_range: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None,
+    insertive_object_color: tuple[float, float, float] | None = None,
+    receptive_object_color: tuple[float, float, float] | None = None,
+    backdrop_asset_names: Sequence[str] | None = None,
+    backdrop_table_relative_poses: Sequence[tuple[float, float, float, float, float, float, float]] | None = None,
+    backdrop_position_jitter_m: float = 0.0,
+    backdrop_color_range: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None,
+    external_camera_table_relative_pose: tuple[float, float, float, float, float, float, float] | None = None,
     log_once: bool = False,
     log_every_reset: bool = False,
 ) -> None:
@@ -1318,6 +1425,11 @@ def align_deploy_scene_to_robosuite_table(
         env_ids = torch.arange(env.num_envs, device=env.device)
     if (workspace_x_range is None) != (workspace_y_range is None):
         raise ValueError("workspace_x_range and workspace_y_range must be provided together.")
+    if (backdrop_asset_names is None) != (backdrop_table_relative_poses is None):
+        raise ValueError("backdrop_asset_names and backdrop_table_relative_poses must be provided together.")
+    if backdrop_asset_names is not None and backdrop_table_relative_poses is not None:
+        if len(backdrop_asset_names) != len(backdrop_table_relative_poses):
+            raise ValueError("backdrop_asset_names and backdrop_table_relative_poses must have the same length.")
 
     robot: Articulation = env.scene[robot_cfg.name]
     insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
@@ -1331,6 +1443,12 @@ def align_deploy_scene_to_robosuite_table(
     robot_pose = robot.data.root_pose_w[env_ids].clone()
     robot_pose[:, :3] += translation_delta
     robot_pose[:, 3:7] = target_pose[:, 3:7]
+    if robot_xy_jitter_m > 0.0:
+        robot_xy_jitter = torch.empty((len(env_ids), 3), dtype=torch.float32, device=env.device).uniform_(
+            -float(robot_xy_jitter_m), float(robot_xy_jitter_m)
+        )
+        robot_xy_jitter[:, 2] = 0.0
+        robot_pose[:, :2] += robot_xy_jitter[:, :2]
     _write_articulation_root_pose_with_visual_sync(robot, robot_pose, env_ids)
 
     insertive_pose = insertive_object.data.root_pose_w[env_ids].clone()
@@ -1340,6 +1458,48 @@ def align_deploy_scene_to_robosuite_table(
 
     table_root_pose = _pose_tensor(table_pose, env, env_ids)
     _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids)
+    if external_camera_table_relative_pose is not None:
+        _sync_sibling_xform_pose(
+            "/World/envs/env_{env_id}/Table/external_cam",
+            table_root_pose,
+            env_ids,
+            relative_pose=external_camera_table_relative_pose,
+        )
+
+    backdrop_group_jitter = None
+    if (
+        backdrop_asset_names is not None
+        and backdrop_table_relative_poses is not None
+        and backdrop_position_jitter_m > 0.0
+    ):
+        # Move the curtain group together so adjacent panel edges remain closed.
+        backdrop_group_jitter = torch.empty((len(env_ids), 3), dtype=torch.float32, device=env.device).uniform_(
+            -float(backdrop_position_jitter_m), float(backdrop_position_jitter_m)
+        )
+
+    if backdrop_asset_names is not None and backdrop_table_relative_poses is not None:
+        shared_backdrop_colors = None
+        if backdrop_color_range is not None:
+            color_low = torch.tensor(backdrop_color_range[0], dtype=torch.float32, device=env.device)
+            color_high = torch.tensor(backdrop_color_range[1], dtype=torch.float32, device=env.device)
+            shared_backdrop_colors = color_low + torch.rand((len(env_ids), 3), dtype=torch.float32, device=env.device) * (
+                color_high - color_low
+            )
+
+        for backdrop_asset_name, backdrop_relative_pose_values in zip(
+            backdrop_asset_names, backdrop_table_relative_poses
+        ):
+            backdrop: RigidObject = env.scene[backdrop_asset_name]
+            backdrop_relative_pose = torch.tensor(
+                backdrop_relative_pose_values, dtype=torch.float32, device=env.device
+            ).repeat(len(env_ids), 1)
+            backdrop_pose = backdrop_relative_pose.clone()
+            backdrop_pose[:, :3] = table_root_pose[:, :3] + backdrop_relative_pose[:, :3]
+            if backdrop_group_jitter is not None:
+                backdrop_pose[:, :3] += backdrop_group_jitter
+            _write_rigid_root_pose_with_visual_sync(backdrop, backdrop_pose, env_ids)
+            if shared_backdrop_colors is not None:
+                _set_rigid_root_visual_color(backdrop, shared_backdrop_colors, env_ids)
 
     receptive_root_pose = _pose_tensor(receptive_object_pose, env, env_ids)
     if workspace_x_range is not None and workspace_y_range is not None:
@@ -1356,6 +1516,26 @@ def align_deploy_scene_to_robosuite_table(
     insertive_pose[:, :3] += object_delta
     _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids)
     _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids)
+
+    shared_task_object_colors = None
+    if task_object_color_range is not None:
+        color_low = torch.tensor(task_object_color_range[0], dtype=torch.float32, device=env.device)
+        color_high = torch.tensor(task_object_color_range[1], dtype=torch.float32, device=env.device)
+        shared_task_object_colors = color_low + torch.rand((len(env_ids), 3), dtype=torch.float32, device=env.device) * (
+            color_high - color_low
+        )
+        _set_rigid_root_visual_color(insertive_object, shared_task_object_colors, env_ids)
+        _set_rigid_root_visual_color(receptive_object, shared_task_object_colors, env_ids)
+    if insertive_object_color is not None:
+        insertive_colors = torch.tensor(insertive_object_color, dtype=torch.float32, device=env.device).repeat(
+            len(env_ids), 1
+        )
+        _set_rigid_root_visual_color(insertive_object, insertive_colors, env_ids)
+    if receptive_object_color is not None:
+        receptive_colors = torch.tensor(receptive_object_color, dtype=torch.float32, device=env.device).repeat(
+            len(env_ids), 1
+        )
+        _set_rigid_root_visual_color(receptive_object, receptive_colors, env_ids)
 
     env.scene.write_data_to_sim()
 
@@ -1381,6 +1561,219 @@ def align_deploy_scene_to_robosuite_table(
             [round(value, 4) for value in table_root_pose[0, :7].detach().cpu().tolist()],
             [round(value, 4) for value in receptive_root_pose[0, :7].detach().cpu().tolist()],
         )
+
+
+class RejectInitialAssemblySuccessReset(ManagerTermBase):
+    """Resample deploy resets that start already assembled."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self.insertive_object_cfg = cfg.params.get("insertive_object_cfg")
+        self.receptive_object_cfg = cfg.params.get("receptive_object_cfg")
+        self.reset_event_name = cfg.params.get("reset_event_name")
+        self.align_event_name = cfg.params.get("align_event_name")
+        self.max_resample_attempts = int(cfg.params.get("max_resample_attempts", 20))
+        self.log_rejections = bool(cfg.params.get("log_rejections", True))
+
+        self.insertive_object: RigidObject = env.scene[self.insertive_object_cfg.name]
+        self.receptive_object: RigidObject = env.scene[self.receptive_object_cfg.name]
+
+        insertive_meta = utils.read_metadata_from_usd_directory(self.insertive_object.cfg.spawn.usd_path)
+        receptive_meta = utils.read_metadata_from_usd_directory(self.receptive_object.cfg.spawn.usd_path)
+        self.insertive_asset_offset = Offset(
+            pos=tuple(insertive_meta.get("assembled_offset").get("pos")),
+            quat=tuple(insertive_meta.get("assembled_offset").get("quat")),
+        )
+        self.receptive_asset_offset = Offset(
+            pos=tuple(receptive_meta.get("assembled_offset").get("pos")),
+            quat=tuple(receptive_meta.get("assembled_offset").get("quat")),
+        )
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        insertive_object_cfg: SceneEntityCfg,
+        receptive_object_cfg: SceneEntityCfg,
+        reset_event_name: str,
+        align_event_name: str,
+        max_resample_attempts: int = 20,
+        log_rejections: bool = True,
+    ) -> None:
+        if env_ids is None or isinstance(env_ids, slice):
+            env_ids = torch.arange(env.num_envs, device=env.device)
+        if len(env_ids) == 0:
+            return
+
+        reset_cfg = env.event_manager.get_term_cfg(self.reset_event_name)
+        align_cfg = env.event_manager.get_term_cfg(self.align_event_name)
+        rejected_total = 0
+
+        for _ in range(self.max_resample_attempts):
+            initial_success_mask = self._compute_initial_success_mask(env)
+            reject_env_ids = env_ids[initial_success_mask[env_ids]]
+            if len(reject_env_ids) == 0:
+                break
+
+            rejected_total += len(reject_env_ids)
+            reset_params = dict(reset_cfg.params)
+            reset_params["success"] = None
+            reset_cfg.func(env, reject_env_ids, **reset_params)
+            align_cfg.func(env, reject_env_ids, **align_cfg.params)
+        else:
+            remaining_mask = self._compute_initial_success_mask(env)
+            remaining_env_ids = env_ids[remaining_mask[env_ids]]
+            if len(remaining_env_ids) > 0:
+                logging.warning(
+                    "[UWLab deploy reset] %s envs still start successful after %s resample attempts: %s",
+                    len(remaining_env_ids),
+                    self.max_resample_attempts,
+                    remaining_env_ids.detach().cpu().tolist(),
+                )
+
+        if self.log_rejections and rejected_total > 0:
+            print(
+                "[UWLab deploy reset] "
+                f"rejected_initial_successful_resets={rejected_total} "
+                f"env_ids={env_ids.detach().cpu().tolist()}",
+                flush=True,
+            )
+
+    def _compute_initial_success_mask(self, env: ManagerBasedEnv) -> torch.Tensor:
+        task_command = env.command_manager.get_term("task_command")
+        success_position_threshold = task_command.success_position_threshold
+        success_orientation_threshold = task_command.success_orientation_threshold
+
+        insertive_pos_w, insertive_quat_w = self.insertive_asset_offset.apply(self.insertive_object)
+        receptive_pos_w, receptive_quat_w = self.receptive_asset_offset.apply(self.receptive_object)
+        rel_pos, rel_quat = math_utils.subtract_frame_transforms(
+            receptive_pos_w,
+            receptive_quat_w,
+            insertive_pos_w,
+            insertive_quat_w,
+        )
+        e_x, e_y, _ = math_utils.euler_xyz_from_quat(rel_quat)
+        euler_xy_distance = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
+        xyz_distance = torch.norm(rel_pos, dim=1)
+        return (xyz_distance < success_position_threshold) & (euler_xy_distance < success_orientation_threshold)
+
+
+class FixedRobotWorkspaceTaskPairReset(ManagerTermBase):
+    """Reset robot/table to fixed poses and randomize peg/peghole inside a workspace."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=100, num_monitored_data=1, device=env.device)
+        self.success_monitor = success_monitor_cfg.class_type(success_monitor_cfg)
+        self.task_id = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        robot_cfg: SceneEntityCfg,
+        insertive_object_cfg: SceneEntityCfg,
+        receptive_object_cfg: SceneEntityCfg,
+        table_cfg: SceneEntityCfg,
+        robot_pose: tuple[float, float, float, float, float, float, float],
+        table_pose: tuple[float, float, float, float, float, float, float],
+        receptive_object_pose: tuple[float, float, float, float, float, float, float],
+        workspace_x_range: Sequence[float],
+        workspace_y_range: Sequence[float],
+        robot_xy_jitter_m: float = 0.0,
+        insertive_object_pose: tuple[float, float, float, float, float, float, float] | None = None,
+        insertive_workspace_x_range: Sequence[float] | None = None,
+        insertive_workspace_y_range: Sequence[float] | None = None,
+        insertive_offset_from_receptive: tuple[float, float, float] | None = None,
+        success: str | None = None,
+        log_every_reset: bool = False,
+        sync_visuals: bool = True,
+    ) -> None:
+        if env_ids is None:
+            env_ids = torch.arange(self.num_envs, device=env.device)
+
+        if success is not None:
+            success_mask = torch.where(eval(success)[env_ids], 1.0, 0.0)
+            self.success_monitor.success_update(self.task_id[env_ids], success_mask)
+            success_rates = self.success_monitor.get_success_rate()
+            if "log" not in self._env.extras:
+                self._env.extras["log"] = {}
+            self._env.extras["log"].update({
+                f"Metrics/task_0_success_rate": success_rates[0].item(),
+                f"Metrics/task_0_prob": 1.0,
+                f"Metrics/task_0_normalized_prob": 1.0,
+            })
+
+        robot: Articulation = env.scene[robot_cfg.name]
+        insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
+        receptive_object: RigidObject = env.scene[receptive_object_cfg.name]
+        table: RigidObject = env.scene[table_cfg.name]
+
+        robot_root_pose = _pose_tensor(robot_pose, env, env_ids)
+        if robot_xy_jitter_m > 0.0:
+            robot_xy_jitter = torch.empty((len(env_ids), 3), dtype=torch.float32, device=env.device).uniform_(
+                -float(robot_xy_jitter_m), float(robot_xy_jitter_m)
+            )
+            robot_xy_jitter[:, 2] = 0.0
+            robot_root_pose[:, :2] += robot_xy_jitter[:, :2]
+        _write_articulation_root_pose_with_visual_sync(robot, robot_root_pose, env_ids, sync_visuals=sync_visuals)
+
+        default_joint_pos = robot.data.default_joint_pos[env_ids].clone()
+        default_joint_vel = torch.zeros_like(robot.data.default_joint_vel[env_ids])
+        robot.write_joint_state_to_sim(default_joint_pos, default_joint_vel, env_ids=env_ids)
+        robot.set_joint_position_target(default_joint_pos, env_ids=env_ids)
+        robot.set_joint_velocity_target(default_joint_vel, env_ids=env_ids)
+
+        table_root_pose = _pose_tensor(table_pose, env, env_ids)
+        _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids, sync_visuals=sync_visuals)
+
+        receptive_root_pose = _pose_tensor(receptive_object_pose, env, env_ids)
+        x_min, x_max = workspace_x_range
+        y_min, y_max = workspace_y_range
+        receptive_root_pose[:, 0] = env.scene.env_origins[env_ids, 0] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(x_min), float(x_max))
+        receptive_root_pose[:, 1] = env.scene.env_origins[env_ids, 1] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(y_min), float(y_max))
+
+        if insertive_object_pose is not None:
+            insertive_root_pose = _pose_tensor(insertive_object_pose, env, env_ids)
+            insertive_x_range = insertive_workspace_x_range if insertive_workspace_x_range is not None else workspace_x_range
+            insertive_y_range = insertive_workspace_y_range if insertive_workspace_y_range is not None else workspace_y_range
+            x_min, x_max = insertive_x_range
+            y_min, y_max = insertive_y_range
+            insertive_root_pose[:, 0] = env.scene.env_origins[env_ids, 0] + torch.empty(
+                (len(env_ids),), dtype=torch.float32, device=env.device
+            ).uniform_(float(x_min), float(x_max))
+            insertive_root_pose[:, 1] = env.scene.env_origins[env_ids, 1] + torch.empty(
+                (len(env_ids),), dtype=torch.float32, device=env.device
+            ).uniform_(float(y_min), float(y_max))
+        else:
+            offset = insertive_offset_from_receptive if insertive_offset_from_receptive is not None else (0.0, 0.0, 0.03)
+            insertive_root_pose = receptive_root_pose.clone()
+            insertive_root_pose[:, :3] += torch.tensor(offset, dtype=torch.float32, device=env.device).view(1, 3)
+
+        _write_rigid_root_pose_with_visual_sync(
+            insertive_object, insertive_root_pose, env_ids, sync_visuals=sync_visuals
+        )
+        _write_rigid_root_pose_with_visual_sync(
+            receptive_object, receptive_root_pose, env_ids, sync_visuals=sync_visuals
+        )
+        env.scene.write_data_to_sim()
+
+        if log_every_reset:
+            reset_count = getattr(env, "_uwlab_finetune_workspace_reset_count", 0) + 1
+            env._uwlab_finetune_workspace_reset_count = reset_count
+            env0_receptive_pose = receptive_root_pose[0, :3].detach().cpu().tolist()
+            env0_insertive_pose = insertive_root_pose[0, :3].detach().cpu().tolist()
+            print(
+                "[UWLab finetune reset] "
+                f"count={reset_count} env_ids={env_ids.detach().cpu().tolist()} "
+                f"peghole_xyz={[round(value, 4) for value in env0_receptive_pose]} "
+                f"peg_xyz={[round(value, 4) for value in env0_insertive_pose]}",
+                flush=True,
+            )
 
 
 class reset_root_states_uniform(ManagerTermBase):

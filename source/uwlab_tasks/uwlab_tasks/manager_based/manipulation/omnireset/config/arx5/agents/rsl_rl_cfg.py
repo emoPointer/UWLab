@@ -41,3 +41,35 @@ class Base_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
         desired_kl=0.01,
         max_grad_norm=1.0,
     )
+
+
+@configclass
+class Finetune_PPORunnerCfg(Base_PPORunnerCfg):
+    """Conservative PPO defaults for workspace/system-identification fine-tuning."""
+
+    policy = RslRlFancyActorCriticCfg(
+        init_noise_std=0.1,
+        actor_obs_normalization=True,
+        critic_obs_normalization=True,
+        actor_hidden_dims=[512, 256, 128, 64],
+        critic_hidden_dims=[512, 256, 128, 64],
+        activation="elu",
+        noise_std_type="log",
+        state_dependent_std=False,
+    )
+
+    algorithm = RslRlPpoAlgorithmCfg(
+        value_loss_coef=1.0,
+        use_clipped_value_loss=True,
+        normalize_advantage_per_mini_batch=False,
+        clip_param=0.2,
+        entropy_coef=0.006,
+        num_learning_epochs=5,
+        num_mini_batches=4,
+        learning_rate=1.0e-4,
+        schedule="fixed",
+        gamma=0.99,
+        lam=0.95,
+        desired_kl=0.01,
+        max_grad_norm=1.0,
+    )
