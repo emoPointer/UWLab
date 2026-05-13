@@ -80,6 +80,8 @@ def _set_fixed_robot_workspace_reset(env_cfg: ManagerBasedRLEnvCfg) -> None:
             "workspace_y_range": (-0.3, -0.1),
             "insertive_workspace_x_range": (-0.4, -0.2),
             "insertive_workspace_y_range": (-0.3, -0.1),
+            "insertive_object_color": (0.0, 1.0, 0.0),
+            "receptive_object_color": (1.0, 0.0, 0.0),
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
             "log_every_reset": False,
             "sync_visuals": True,

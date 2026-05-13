@@ -1395,6 +1395,44 @@ def _set_rigid_root_visual_color(asset: RigidObject, colors: torch.Tensor, env_i
             _set_bound_material_color(prim, color_vec)
 
 
+def set_task_object_visual_colors(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    insertive_object_cfg: SceneEntityCfg,
+    receptive_object_cfg: SceneEntityCfg,
+    insertive_object_color: tuple[float, float, float] | None = None,
+    receptive_object_color: tuple[float, float, float] | None = None,
+    required_insertive_usd_substring: str | None = None,
+    required_receptive_usd_substring: str | None = None,
+) -> None:
+    """Set fixed visual colors for task objects, optionally gated by USD path substrings."""
+    if env_ids is None or isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if len(env_ids) == 0:
+        return
+
+    insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
+    receptive_object: RigidObject = env.scene[receptive_object_cfg.name]
+    insertive_usd_path = getattr(insertive_object.cfg.spawn, "usd_path", "")
+    receptive_usd_path = getattr(receptive_object.cfg.spawn, "usd_path", "")
+
+    if required_insertive_usd_substring and required_insertive_usd_substring not in insertive_usd_path:
+        return
+    if required_receptive_usd_substring and required_receptive_usd_substring not in receptive_usd_path:
+        return
+
+    if insertive_object_color is not None:
+        insertive_colors = torch.tensor(insertive_object_color, dtype=torch.float32, device=env.device).repeat(
+            len(env_ids), 1
+        )
+        _set_rigid_root_visual_color(insertive_object, insertive_colors, env_ids)
+    if receptive_object_color is not None:
+        receptive_colors = torch.tensor(receptive_object_color, dtype=torch.float32, device=env.device).repeat(
+            len(env_ids), 1
+        )
+        _set_rigid_root_visual_color(receptive_object, receptive_colors, env_ids)
+
+
 def align_deploy_scene_to_robosuite_table(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
@@ -1685,11 +1723,13 @@ class FixedRobotWorkspaceTaskPairReset(ManagerTermBase):
         insertive_workspace_x_range: Sequence[float] | None = None,
         insertive_workspace_y_range: Sequence[float] | None = None,
         insertive_offset_from_receptive: tuple[float, float, float] | None = None,
+        insertive_object_color: tuple[float, float, float] | None = None,
+        receptive_object_color: tuple[float, float, float] | None = None,
         success: str | None = None,
         log_every_reset: bool = False,
         sync_visuals: bool = True,
     ) -> None:
-        if env_ids is None:
+        if env_ids is None or isinstance(env_ids, slice):
             env_ids = torch.arange(self.num_envs, device=env.device)
 
         if success is not None:
@@ -1760,6 +1800,16 @@ class FixedRobotWorkspaceTaskPairReset(ManagerTermBase):
         _write_rigid_root_pose_with_visual_sync(
             receptive_object, receptive_root_pose, env_ids, sync_visuals=sync_visuals
         )
+        if insertive_object_color is not None:
+            insertive_colors = torch.tensor(insertive_object_color, dtype=torch.float32, device=env.device).repeat(
+                len(env_ids), 1
+            )
+            _set_rigid_root_visual_color(insertive_object, insertive_colors, env_ids)
+        if receptive_object_color is not None:
+            receptive_colors = torch.tensor(receptive_object_color, dtype=torch.float32, device=env.device).repeat(
+                len(env_ids), 1
+            )
+            _set_rigid_root_visual_color(receptive_object, receptive_colors, env_ids)
         env.scene.write_data_to_sim()
 
         if log_every_reset:

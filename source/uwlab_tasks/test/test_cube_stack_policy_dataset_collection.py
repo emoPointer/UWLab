@@ -46,16 +46,34 @@ def test_cube_stack_policy_dataset_uses_fixed_semantic_cube_colors():
         / "mdp"
         / "events.py"
     ).read_text()
+    arx5_state_cfg = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "config"
+        / "arx5"
+        / "rl_state_cfg.py"
+    ).read_text()
 
+    assert "def set_task_object_visual_colors" in events
     assert "insertive_object_color: tuple[float, float, float] | None = None" in events
     assert "receptive_object_color: tuple[float, float, float] | None = None" in events
     assert "_set_rigid_root_visual_color(insertive_object, insertive_colors, env_ids)" in events
     assert "_set_rigid_root_visual_color(receptive_object, receptive_colors, env_ids)" in events
+    assert "set_cube_stack_colors = EventTerm" in arx5_state_cfg
+    assert '"insertive_object_color": (0.0, 1.0, 0.0)' in arx5_state_cfg
+    assert '"receptive_object_color": (1.0, 0.0, 0.0)' in arx5_state_cfg
 
     for script in (collect_script, replay_script):
         assert 'align_params["task_object_color_range"] = None' in script
         assert 'align_params["insertive_object_color"] = (0.0, 1.0, 0.0)' in script
         assert 'align_params["receptive_object_color"] = (1.0, 0.0, 0.0)' in script
+        assert '"insertive_object_color": (0.0, 1.0, 0.0)' in script
+        assert '"receptive_object_color": (1.0, 0.0, 0.0)' in script
 
 
 def test_cube_stack_policy_dataset_collection_hdf5_schema():

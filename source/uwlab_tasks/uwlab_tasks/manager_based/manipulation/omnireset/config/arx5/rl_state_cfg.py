@@ -304,6 +304,19 @@ class BaseEventCfg:
     # mode: reset
     reset_everything = EventTerm(func=task_mdp.reset_scene_to_default, mode="reset", params={})
 
+    set_cube_stack_colors = EventTerm(
+        func=task_mdp.set_task_object_visual_colors,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "insertive_object_color": (0.0, 1.0, 0.0),
+            "receptive_object_color": (1.0, 0.0, 0.0),
+            "required_insertive_usd_substring": "InsertiveCube",
+            "required_receptive_usd_substring": "ReceptiveCube",
+        },
+    )
+
 
 @configclass
 class TrainEventCfg(BaseEventCfg):
