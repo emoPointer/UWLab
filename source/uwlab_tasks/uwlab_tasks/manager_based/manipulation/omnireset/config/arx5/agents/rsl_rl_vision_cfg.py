@@ -27,6 +27,12 @@ class VisionDistill_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
     obs_groups = {"policy": ["policy"], "critic": ["critic"]}
     resume = False
     experiment_name = "arx5_omnireset_vision_distill"
+    wandb_project = "arx5_vision_distill"
+    wandb_camera_video_interval = 100
+    wandb_camera_video_length = 16
+    wandb_camera_video_camera_names = ["external_camera"]
+    wandb_camera_video_env_index = 0
+    wandb_camera_video_fps = 10
 
     policy = RslRlVisionActorCriticCfg(
         vision_encoder=RslRlVisionEncoderCfg(

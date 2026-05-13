@@ -51,6 +51,9 @@ def test_vision_distillation_agent_cfg_uses_resnet18_and_online_teacher_loss():
 
     assert 'class_name = "VisionDistillOnPolicyRunner"' in agent_cfg
     assert 'experiment_name = "arx5_omnireset_vision_distill"' in agent_cfg
+    assert 'wandb_project = "arx5_vision_distill"' in agent_cfg
+    assert "wandb_camera_video_interval = 100" in agent_cfg
+    assert 'wandb_camera_video_camera_names = ["external_camera"]' in agent_cfg
     assert 'obs_groups = {"policy": ["policy"], "critic": ["critic"]}' in agent_cfg
     assert 'name="resnet18"' in agent_cfg
     assert "pretrained=False" in agent_cfg
@@ -80,6 +83,9 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     assert "teacher_checkpoint" in runner
     assert "teacher.load_state_dict" in runner
     assert "No teacher checkpoint configured; using inference-only placeholder teacher" in runner
+    assert "def _log_wandb_camera_videos" in runner
+    assert "wandb.Video(video, fps=fps, format=\"mp4\")" in runner
+    assert 'f"train_camera/{camera_name}"' in runner
     assert "class VisionDistillPPO(PPO)" in ppo
     assert "teacher.act_inference(obs_batch)" in ppo
     assert "torch.nn.functional.mse_loss(mu_batch, teacher_actions)" in ppo
@@ -95,6 +101,10 @@ def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides(
     assert "TEACHER_CKPT" in script
     assert "--task OmniReset-Arx5-OSC-Vision-v0" in script
     assert "--enable_cameras" in script
+    assert 'LOGGER="${LOGGER:-wandb}"' in script
+    assert 'WANDB_CAMERA_VIDEO_INTERVAL="${WANDB_CAMERA_VIDEO_INTERVAL:-100}"' in script
+    assert 'agent.wandb_camera_video_interval="$WANDB_CAMERA_VIDEO_INTERVAL"' in script
+    assert "agent.wandb_camera_video_camera_names='[external_camera]'" in script
     assert 'agent.algorithm.teacher_checkpoint="$TEACHER_CKPT"' in script
     assert 'agent.algorithm.distillation.lambda_initial="$DISTILL_LAMBDA_INITIAL"' in script
     assert 'agent.algorithm.distillation.lambda_final="$DISTILL_LAMBDA_FINAL"' in script
