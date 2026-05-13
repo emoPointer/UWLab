@@ -91,6 +91,19 @@ gym.register(
 )
 
 # ============================================================================
+# RL vision distillation (student vision actor, privileged critic, state teacher)
+# ============================================================================
+gym.register(
+    id="OmniReset-Arx5-OSC-Vision-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_vision_cfg:Arx5OSCVisionTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_vision_cfg:VisionDistill_PPORunnerCfg",
+    },
+)
+
+# ============================================================================
 # RL finetune (Stage 2: explicit actuator, sysid DR curriculum)
 # ============================================================================
 gym.register(
@@ -113,6 +126,16 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Arx5OSCEvalCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="OmniReset-Arx5-OSC-Vision-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_vision_cfg:Arx5OSCVisionPlayCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_vision_cfg:VisionDistill_PPORunnerCfg",
     },
 )
 

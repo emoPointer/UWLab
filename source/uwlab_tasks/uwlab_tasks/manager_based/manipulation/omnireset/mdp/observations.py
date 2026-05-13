@@ -287,6 +287,72 @@ def process_image(
     return images
 
 
+def process_image_crop_resize(
+    env: ManagerBasedEnv,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("tiled_camera"),
+    data_type: str = "rgb",
+    crop_top: int = 0,
+    crop_left: int | None = None,
+    crop_right: int = 0,
+    crop_size: int | tuple[int, int] | None = None,
+    output_size: tuple[int, int] | list[int] = (128, 128),
+    normalize: bool = True,
+) -> torch.Tensor:
+    """Read an RGB camera image, optionally crop it, and resize it to NCHW."""
+    if data_type != "rgb":
+        raise ValueError(f"Only RGB images are supported, got data_type={data_type!r}.")
+
+    sensor: TiledCamera | Camera | RayCasterCamera = env.scene.sensors[sensor_cfg.name]
+    images = sensor.data.output[data_type].clone()
+    if images.ndim < 4:
+        raise ValueError(f"Expected camera images with shape (..., H, W, C), got {tuple(images.shape)}.")
+
+    height = images.shape[-3]
+    width = images.shape[-2]
+    channels = images.shape[-1]
+    if channels < 3:
+        raise ValueError(f"Expected at least 3 image channels for RGB data, got {channels}.")
+    images = images[..., :3]
+
+    if crop_size is not None:
+        if isinstance(crop_size, int):
+            crop_height = crop_width = crop_size
+        else:
+            crop_height, crop_width = crop_size
+
+        if crop_left is None:
+            crop_left = width - crop_right - crop_width
+        crop_bottom = crop_top + crop_height
+        crop_end = crop_left + crop_width
+        if crop_top < 0 or crop_left < 0 or crop_bottom > height or crop_end > width:
+            raise ValueError(
+                "Image crop is outside camera bounds: "
+                f"image=({height}, {width}), crop_top={crop_top}, crop_left={crop_left}, "
+                f"crop_size=({crop_height}, {crop_width}), crop_right={crop_right}."
+            )
+        images = images[..., crop_top:crop_bottom, crop_left:crop_end, :]
+
+    leading_shape = images.shape[:-3]
+    image_height = images.shape[-3]
+    image_width = images.shape[-2]
+    image_channels = images.shape[-1]
+
+    images = images.to(dtype=torch.float32)
+    if normalize:
+        images.div_(255.0).clamp_(0.0, 1.0)
+
+    images = images.permute(*range(len(leading_shape)), len(leading_shape) + 2, len(leading_shape), len(leading_shape) + 1)
+    images = images.reshape(-1, image_channels, image_height, image_width)
+    output_size = tuple(output_size)
+    if (image_height, image_width) != output_size:
+        images = F.interpolate(images, size=output_size, mode="bilinear", antialias=True)
+    images = images.reshape(*leading_shape, image_channels, output_size[0], output_size[1])
+
+    if not normalize:
+        images = images.clamp_(0, 255).to(dtype=torch.uint8)
+    return images
+
+
 def binary_force_contact(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg,

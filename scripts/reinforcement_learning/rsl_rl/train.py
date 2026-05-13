@@ -116,6 +116,7 @@ import uwlab_tasks  # noqa: F401
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab_tasks.utils import get_checkpoint_path
 from play_checkpoint_utils import freeze_runner_action_noise, load_runner_checkpoint_for_training
+from uwlab_rl.rsl_rl.vision_distill_runner import VisionDistillOnPolicyRunner
 from uwlab_tasks.utils.hydra import hydra_task_config
 
 # import logger
@@ -220,6 +221,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    elif agent_cfg.class_name == "VisionDistillOnPolicyRunner":
+        runner = VisionDistillOnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
     # write git state to logs
