@@ -126,6 +126,10 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     assert "wandb.Video(video, fps=fps, format=\"mp4\")" in runner
     assert 'f"train_camera/{camera_name}"' in runner
     assert "class VisionDistillPPO(PPO)" in ppo
+    assert "class NestedObservationRolloutStorage(RolloutStorage)" in ppo
+    assert "def init_storage(" in ppo
+    assert "NestedObservationRolloutStorage(" in ppo
+    assert "obs.unsqueeze(0).expand" in ppo
     assert "teacher.act_inference(obs_batch)" in ppo
     assert "torch.nn.functional.mse_loss(mu_batch, teacher_actions)" in ppo
     assert "teacher_student_action_l2" in ppo

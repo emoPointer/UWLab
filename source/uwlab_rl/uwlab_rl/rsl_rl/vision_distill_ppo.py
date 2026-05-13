@@ -9,6 +9,47 @@ import torch
 import torch.nn as nn
 
 from rsl_rl.algorithms import PPO
+from rsl_rl.storage import RolloutStorage
+from tensordict import TensorDict
+
+
+class NestedObservationRolloutStorage(RolloutStorage):
+    """Rollout storage that preserves nested TensorDict observations."""
+
+    def __init__(
+        self,
+        training_type: str,
+        num_envs: int,
+        num_transitions_per_env: int,
+        obs: TensorDict,
+        actions_shape: tuple[int] | list[int],
+        device: str = "cpu",
+    ) -> None:
+        self.training_type = training_type
+        self.device = device
+        self.num_transitions_per_env = num_transitions_per_env
+        self.num_envs = num_envs
+        self.actions_shape = actions_shape
+
+        self.observations = obs.unsqueeze(0).expand(num_transitions_per_env, *obs.batch_size).clone().zero_().to(device)
+        self.rewards = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+        self.actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+        self.dones = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device).byte()
+
+        if training_type == "distillation":
+            self.privileged_actions = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+
+        if training_type == "rl":
+            self.values = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+            self.actions_log_prob = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+            self.mu = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+            self.sigma = torch.zeros(num_transitions_per_env, num_envs, *actions_shape, device=self.device)
+            self.returns = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+            self.advantages = torch.zeros(num_transitions_per_env, num_envs, 1, device=self.device)
+
+        self.saved_hidden_state_a = None
+        self.saved_hidden_state_c = None
+        self.step = 0
 
 
 class VisionDistillPPO(PPO):
@@ -43,6 +84,23 @@ class VisionDistillPPO(PPO):
         self.decay_iterations = int(distillation.get("decay_iterations", 8000))
         self.teacher_obs_group = teacher_obs_group
         self.update_count = 0
+
+    def init_storage(
+        self,
+        training_type: str,
+        num_envs: int,
+        num_transitions_per_env: int,
+        obs: TensorDict,
+        actions_shape: tuple[int] | list[int],
+    ) -> None:
+        self.storage = NestedObservationRolloutStorage(
+            training_type,
+            num_envs,
+            num_transitions_per_env,
+            obs,
+            actions_shape,
+            self.device,
+        )
 
     def _distillation_weight(self) -> float:
         if not self.distillation_enabled:
