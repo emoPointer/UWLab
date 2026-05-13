@@ -193,6 +193,7 @@ class VideoRecorder:
         self.height = int(height)
         self.fps = float(fps)
         self._renderer: mujoco.Renderer | None = None
+        self._scene_option: mujoco.MjvOption | None = None
         self._writer = None
         self._frame_count = 0
 
@@ -203,6 +204,8 @@ class VideoRecorder:
     def __enter__(self) -> "VideoRecorder":
         self.video_path.parent.mkdir(parents=True, exist_ok=True)
         self._renderer = mujoco.Renderer(self.model, height=self.height, width=self.width)
+        self._scene_option = mujoco.MjvOption()
+        self._scene_option.geomgroup[2] = 0
         self._writer = imageio.get_writer(self.video_path, fps=self.fps, codec="libx264", format="FFMPEG")
         return self
 
@@ -217,7 +220,7 @@ class VideoRecorder:
     def capture(self, data: mujoco.MjData) -> None:
         if self._renderer is None or self._writer is None:
             return
-        self._renderer.update_scene(data, camera=self.camera_name)
+        self._renderer.update_scene(data, camera=self.camera_name, scene_option=self._scene_option)
         self._writer.append_data(self._renderer.render())
         self._frame_count += 1
 
