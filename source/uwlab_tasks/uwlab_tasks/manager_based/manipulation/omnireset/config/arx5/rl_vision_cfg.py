@@ -11,46 +11,65 @@ vision-policy variant for online PPO distillation from the frozen state policy.
 
 from __future__ import annotations
 
+from isaaclab.managers import EventTermCfg as EventTerm
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import SceneEntityCfg
-from isaaclab.sensors import TiledCameraCfg
 from isaaclab.utils import configclass
 
 from uwlab_tasks.manager_based.manipulation.omnireset.config.arx5.actions import Arx5OSCTrainAction
 
 from ... import mdp as task_mdp
 from .rl_state_cfg import (
-    ROBOSUITE_CAMERA_HEIGHT,
-    ROBOSUITE_CAMERA_WIDTH,
     Arx5RlStateCfg,
+    DeployRlStateSceneCfg,
     ObservationsCfg,
-    RlStateSceneCfg,
     TrainEvalEventCfg,
     TrainEventCfg,
 )
 
 
 @configclass
-class VisionSceneCfg(RlStateSceneCfg):
-    """State scene plus the two cameras used by the vision student."""
+class VisionSceneCfg(DeployRlStateSceneCfg):
+    """Deploy-style scene plus cameras used by the vision student."""
 
-    external_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Table/external_cam/Camera",
-        update_period=0,
-        height=ROBOSUITE_CAMERA_HEIGHT,
-        width=ROBOSUITE_CAMERA_WIDTH,
-        data_types=["rgb"],
-        spawn=None,
+    pass
+
+
+@configclass
+class VisionTrainEventCfg(TrainEventCfg):
+    """Vision training events: reset manager stats plus visual domain randomization."""
+
+    randomize_backdrop_visuals = EventTerm(
+        func=task_mdp.randomize_backdrop_visuals,
+        mode="reset",
+        params={
+            "table_cfg": SceneEntityCfg("table"),
+            "backdrop_asset_names": (
+                "curtain_back",
+                "curtain_left",
+                "curtain_right",
+            ),
+            "backdrop_table_relative_poses": (
+                (-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0),
+                (-0.05, 0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+                (-0.05, -0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+            ),
+            "backdrop_position_jitter_m": 0.02,
+            "backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+        },
     )
 
-    wrist_camera = TiledCameraCfg(
-        prim_path="{ENV_REGEX_NS}/Robot/camera/Camera",
-        update_period=0,
-        height=ROBOSUITE_CAMERA_HEIGHT,
-        width=ROBOSUITE_CAMERA_WIDTH,
-        data_types=["rgb"],
-        spawn=None,
+    randomize_sky_light = EventTerm(
+        func=task_mdp.randomize_dome_light,
+        mode="reset",
+        params={
+            "light_path": "/World/skyLight",
+            "intensity_range": (800.0, 3500.0),
+            "rotation_range": (0.0, 360.0),
+            "pitch_range": (-10.0, 10.0),
+            "roll_range": (-5.0, 5.0),
+        },
     )
 
 
@@ -118,7 +137,7 @@ class Arx5OSCVisionTrainCfg(Arx5RlStateCfg):
 
     scene: VisionSceneCfg = VisionSceneCfg(num_envs=128, env_spacing=1.5)
     observations: VisionObservationsCfg = VisionObservationsCfg()
-    events: TrainEventCfg = TrainEventCfg()
+    events: VisionTrainEventCfg = VisionTrainEventCfg()
     actions: Arx5OSCTrainAction = Arx5OSCTrainAction()
 
 

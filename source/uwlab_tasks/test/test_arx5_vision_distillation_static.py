@@ -28,10 +28,14 @@ def test_arx5_vision_task_is_registered_with_vision_distill_agent():
 
 def test_arx5_vision_observations_match_v1_plan():
     rl_vision_cfg = (ARX5_CONFIG_DIR / "rl_vision_cfg.py").read_text()
+    rl_state_cfg = (ARX5_CONFIG_DIR / "rl_state_cfg.py").read_text()
 
-    assert "class VisionSceneCfg" in rl_vision_cfg
-    assert 'prim_path="{ENV_REGEX_NS}/Table/external_cam/Camera"' in rl_vision_cfg
-    assert 'prim_path="{ENV_REGEX_NS}/Robot/camera/Camera"' in rl_vision_cfg
+    assert "class VisionSceneCfg(DeployRlStateSceneCfg)" in rl_vision_cfg
+    assert 'prim_path="{ENV_REGEX_NS}/Table/external_cam/Camera"' in rl_state_cfg
+    assert 'prim_path="{ENV_REGEX_NS}/Robot/camera/Camera"' in rl_state_cfg
+    assert 'prim_path="{ENV_REGEX_NS}/CurtainBack"' in rl_state_cfg
+    assert 'prim_path="{ENV_REGEX_NS}/CurtainLeft"' in rl_state_cfg
+    assert 'prim_path="{ENV_REGEX_NS}/CurtainRight"' in rl_state_cfg
     assert "class VisionObservationsCfg" in rl_vision_cfg
     assert "joint_pos = ObsTerm(func=task_mdp.joint_pos)" in rl_vision_cfg
     assert "external_rgb = ObsTerm" in rl_vision_cfg
@@ -44,6 +48,41 @@ def test_arx5_vision_observations_match_v1_plan():
     assert "self.flatten_history_dim = False" in rl_vision_cfg
     assert "class TeacherPolicyCfg(ObservationsCfg.PolicyCfg)" in rl_vision_cfg
     assert "teacher_policy: TeacherPolicyCfg = TeacherPolicyCfg()" in rl_vision_cfg
+
+
+def test_arx5_vision_training_randomizes_backdrop_and_light_on_reset():
+    rl_vision_cfg = (ARX5_CONFIG_DIR / "rl_vision_cfg.py").read_text()
+    events_py = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "mdp"
+        / "events.py"
+    ).read_text()
+
+    assert "class VisionTrainEventCfg(TrainEventCfg)" in rl_vision_cfg
+    assert "events: VisionTrainEventCfg = VisionTrainEventCfg()" in rl_vision_cfg
+    assert "randomize_backdrop_visuals = EventTerm" in rl_vision_cfg
+    assert "func=task_mdp.randomize_backdrop_visuals" in rl_vision_cfg
+    assert '"backdrop_asset_names": (' in rl_vision_cfg
+    assert '"curtain_back"' in rl_vision_cfg
+    assert '"curtain_left"' in rl_vision_cfg
+    assert '"curtain_right"' in rl_vision_cfg
+    assert '"backdrop_position_jitter_m": 0.02' in rl_vision_cfg
+    assert '"backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0))' in rl_vision_cfg
+    assert "randomize_sky_light = EventTerm" in rl_vision_cfg
+    assert "func=task_mdp.randomize_dome_light" in rl_vision_cfg
+    assert '"intensity_range": (800.0, 3500.0)' in rl_vision_cfg
+    assert '"rotation_range": (0.0, 360.0)' in rl_vision_cfg
+    assert '"pitch_range": (-10.0, 10.0)' in rl_vision_cfg
+    assert '"roll_range": (-5.0, 5.0)' in rl_vision_cfg
+    assert "def randomize_backdrop_visuals(" in events_py
+    assert "def randomize_dome_light(" in events_py
+    assert "_apply_dome_light_rotation(light_prim, rotation_range)" in events_py
 
 
 def test_vision_distillation_agent_cfg_uses_resnet18_and_online_teacher_loss():

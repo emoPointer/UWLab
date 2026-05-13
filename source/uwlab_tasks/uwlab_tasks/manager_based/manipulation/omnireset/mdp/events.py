@@ -6,6 +6,7 @@
 """Event functions for manipulation tasks."""
 
 import logging
+import math
 import numpy as np
 import os
 import random
@@ -1395,6 +1396,117 @@ def _set_rigid_root_visual_color(asset: RigidObject, colors: torch.Tensor, env_i
             _set_bound_material_color(prim, color_vec)
 
 
+def _sample_float_range(value_range: Sequence[float]) -> float:
+    if len(value_range) != 2:
+        raise ValueError("Expected a two-value range.")
+    low, high = float(value_range[0]), float(value_range[1])
+    return random.uniform(low, high)
+
+
+def _apply_dome_light_rotation(
+    light_prim,
+    rotation_range: Sequence[float],
+    pitch_range: Sequence[float] = (0.0, 0.0),
+    roll_range: Sequence[float] = (0.0, 0.0),
+) -> tuple[float, float, float]:
+    roll = math.radians(_sample_float_range(roll_range))
+    pitch = math.radians(_sample_float_range(pitch_range))
+    yaw = math.radians(_sample_float_range(rotation_range))
+    quat = math_utils.quat_from_euler_xyz(
+        torch.tensor([roll], dtype=torch.float64),
+        torch.tensor([pitch], dtype=torch.float64),
+        torch.tensor([yaw], dtype=torch.float64),
+    )[0]
+
+    xformable = UsdGeom.Xformable(light_prim)
+    xformable.ClearXformOpOrder()
+    xformable.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
+        Gf.Quatd(float(quat[0]), Gf.Vec3d(float(quat[1]), float(quat[2]), float(quat[3])))
+    )
+    return math.degrees(roll), math.degrees(pitch), math.degrees(yaw)
+
+
+def randomize_backdrop_visuals(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    table_cfg: SceneEntityCfg,
+    backdrop_asset_names: Sequence[str],
+    backdrop_table_relative_poses: Sequence[tuple[float, float, float, float, float, float, float]],
+    backdrop_position_jitter_m: float = 0.0,
+    backdrop_color_range: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None,
+) -> None:
+    """Randomize deploy-style backdrop panel positions and shared visual color."""
+    if env_ids is None or isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if len(env_ids) == 0:
+        return
+    if len(backdrop_asset_names) != len(backdrop_table_relative_poses):
+        raise ValueError("backdrop_asset_names and backdrop_table_relative_poses must have the same length.")
+
+    table: RigidObject = env.scene[table_cfg.name]
+    table_root_pose = table.data.root_pose_w[env_ids].clone()
+
+    backdrop_group_jitter = None
+    if backdrop_position_jitter_m > 0.0:
+        backdrop_group_jitter = torch.empty((len(env_ids), 3), dtype=torch.float32, device=env.device).uniform_(
+            -float(backdrop_position_jitter_m), float(backdrop_position_jitter_m)
+        )
+
+    shared_backdrop_colors = None
+    if backdrop_color_range is not None:
+        color_low = torch.tensor(backdrop_color_range[0], dtype=torch.float32, device=env.device)
+        color_high = torch.tensor(backdrop_color_range[1], dtype=torch.float32, device=env.device)
+        shared_backdrop_colors = color_low + torch.rand((len(env_ids), 3), dtype=torch.float32, device=env.device) * (
+            color_high - color_low
+        )
+
+    for backdrop_asset_name, backdrop_relative_pose_values in zip(backdrop_asset_names, backdrop_table_relative_poses):
+        backdrop: RigidObject = env.scene[backdrop_asset_name]
+        backdrop_relative_pose = torch.tensor(backdrop_relative_pose_values, dtype=torch.float32, device=env.device).repeat(
+            len(env_ids), 1
+        )
+        backdrop_pose = backdrop_relative_pose.clone()
+        backdrop_pose[:, :3] = table_root_pose[:, :3] + backdrop_relative_pose[:, :3]
+        if backdrop_group_jitter is not None:
+            backdrop_pose[:, :3] += backdrop_group_jitter
+        _write_rigid_root_pose_with_visual_sync(backdrop, backdrop_pose, env_ids)
+        if shared_backdrop_colors is not None:
+            _set_rigid_root_visual_color(backdrop, shared_backdrop_colors, env_ids)
+
+    env.scene.write_data_to_sim()
+
+
+def randomize_dome_light(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    light_path: str = "/World/skyLight",
+    intensity_range: Sequence[float] = (800.0, 3000.0),
+    rotation_range: Sequence[float] = (0.0, 360.0),
+    pitch_range: Sequence[float] = (0.0, 0.0),
+    roll_range: Sequence[float] = (0.0, 0.0),
+) -> None:
+    """Randomize the global DomeLight intensity and orientation."""
+    stage = omni.usd.get_context().get_stage()
+    light_prim = stage.GetPrimAtPath(light_path)
+    if not light_prim.IsValid():
+        raise RuntimeError(f"[randomize_dome_light] Light prim at '{light_path}' does not exist on the stage.")
+    dome_light = UsdLux.DomeLight(light_prim)
+    if not dome_light:
+        raise RuntimeError(f"[randomize_dome_light] Prim at '{light_path}' is not a DomeLight.")
+
+    intensity = _sample_float_range(intensity_range)
+    light_prim.GetAttribute("inputs:intensity").Set(float(intensity))
+    roll, pitch, yaw = _apply_dome_light_rotation(light_prim, rotation_range, pitch_range, roll_range)
+
+    logging.debug(
+        "[randomize_dome_light] Applied: intensity=%.3f roll=%.3f pitch=%.3f yaw=%.3f",
+        intensity,
+        roll,
+        pitch,
+        yaw,
+    )
+
+
 def set_task_object_visual_colors(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
@@ -2003,23 +2115,15 @@ class randomize_hdri(ManagerTermBase):
             raise RuntimeError(f"[randomize_hdri] Prim at '{light_path}' is not a DomeLight.")
 
         random_hdri = random.choice(self.hdri_paths)
-        intensity = random.randint(int(intensity_range[0]), int(intensity_range[1]))
+        intensity = _sample_float_range(intensity_range)
 
         # Use direct attribute access (DEXTRAH-style) -- UsdLux helper methods
         # can map to the wrong schema attribute name depending on USD version.
         light_prim.GetAttribute("inputs:texture:file").Set(random_hdri)
         light_prim.GetAttribute("inputs:intensity").Set(float(intensity))
+        _, _, yaw = _apply_dome_light_rotation(light_prim, rotation_range)
 
-        from scipy.spatial.transform import Rotation as R
-
-        quat = R.random().as_quat()  # [x, y, z, w] scipy convention
-        xformable = UsdGeom.Xformable(light_prim)
-        xformable.ClearXformOpOrder()
-        xformable.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble).Set(
-            Gf.Quatd(float(quat[3]), Gf.Vec3d(float(quat[0]), float(quat[1]), float(quat[2])))
-        )
-
-        logging.debug(f"[randomize_hdri] Applied: {random_hdri}, intensity={intensity}")
+        logging.debug(f"[randomize_hdri] Applied: {random_hdri}, intensity={intensity}, yaw={yaw}")
 
 
 def randomize_tiled_cameras(
