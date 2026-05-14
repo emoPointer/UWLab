@@ -93,9 +93,34 @@ def test_cube_stack_collection_scripts_pin_robosuite_workspace():
 
 def test_cube_stack_training_uses_local_recollected_cube_data():
     script = (SCRIPTS_ROOT / "07_train.sh").read_text()
+    init_py = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "config"
+        / "arx5"
+        / "__init__.py"
+    ).read_text()
+    rl_cfg = RL_STATE_CFG.read_text()
 
-    assert "--task OmniReset-Arx5-OSC-State-v0" in script
+    assert "--task OmniReset-Arx5-OSC-CubeStack-State-v0" in script
+    assert 'id="OmniReset-Arx5-OSC-CubeStack-State-v0"' in init_py
+    assert "rl_state_cfg:Arx5OSCCubeStackTrainCfg" in init_py
+    assert "class CubeStackTrainEventCfg(TrainEventCfg)" in rl_cfg
+    assert "func=task_mdp.align_deploy_scene_to_robosuite_table" in rl_cfg
+    assert "scene: RlStateSceneCfg = RlStateSceneCfg(num_envs=128, env_spacing=3.0)" in rl_cfg
+    assert '"receptive_object_pose": ROBOSUITE_RECEPTIVE_OBJECT_POSE' in rl_cfg
+    assert '"workspace_x_range": ROBOSUITE_WORKSPACE_X_RANGE' in rl_cfg
+    assert '"workspace_y_range": ROBOSUITE_WORKSPACE_Y_RANGE' in rl_cfg
     assert "env.scene.insertive_object=cube" in script
     assert "env.scene.receptive_object=cube" in script
+    assert "env.commands.task_command.success_mode=stack_center" in script
+    assert "env.commands.task_command.success_orientation_required=false" in script
+    assert 'SUCCESS_THRESHOLD_SCALE="${SUCCESS_THRESHOLD_SCALE:-2.0}"' in script
+    assert 'env.commands.task_command.success_threshold_scale="$SUCCESS_THRESHOLD_SCALE"' in script
     assert "env.events.reset_from_reset_states.params.dataset_dir=\"$DATASET_DIR\"" in script
     assert "DATASET_DIR=\"${DATASET_DIR:-./Datasets/OmniReset}\"" in script

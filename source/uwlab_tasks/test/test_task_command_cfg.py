@@ -13,6 +13,8 @@ def test_task_command_cfg_exposes_success_threshold_scale():
     ).read_text()
 
     assert "success_threshold_scale: float = 1.0" in commands_cfg
+    assert "success_orientation_required: bool = True" in commands_cfg
+    assert 'success_mode: str = "assembled_pose"' in commands_cfg
 
 
 def test_task_command_uses_success_threshold_scale():
@@ -27,5 +29,9 @@ def test_task_command_uses_success_threshold_scale():
     ).read_text()
 
     assert "cfg.success_threshold_scale" in commands
+    assert "cfg.success_orientation_required" in commands
+    assert "cfg.success_mode" in commands
     assert "success_position_threshold" in commands
     assert "success_orientation_threshold" in commands
+    assert '"stack_center"' in commands
+    assert "self.stack_height" in commands

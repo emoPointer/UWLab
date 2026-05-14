@@ -99,11 +99,18 @@ class TaskCommand(TaskDependentCommand):
         )
         if cfg.success_threshold_scale <= 0.0:
             raise ValueError(f"success_threshold_scale must be positive, got {cfg.success_threshold_scale}")
+        if cfg.success_mode not in ("assembled_pose", "stack_center"):
+            raise ValueError(f"Unsupported success_mode={cfg.success_mode!r}.")
         self.success_position_threshold: float = (
             receptive_meta.get("success_thresholds").get("position") * cfg.success_threshold_scale
         )
         self.success_orientation_threshold: float = (
             receptive_meta.get("success_thresholds").get("orientation") * cfg.success_threshold_scale
+        )
+        self.success_orientation_required: bool = cfg.success_orientation_required
+        self.success_mode: str = cfg.success_mode
+        self.stack_height: float = abs(float(self.insertive_asset_offset.pos[2])) + abs(
+            float(self.receptive_asset_offset.pos[2])
         )
 
         self.metrics["average_rot_align_error"] = torch.zeros(self.num_envs, device=self.device)
@@ -138,25 +145,37 @@ class TaskCommand(TaskDependentCommand):
         self.metrics["end_of_episode_success_rate"][reset_env] = last_episode_success.float()
 
         # logs current data
-        insertive_asset_alignment_pos_w, insertive_asset_alignment_quat_w = self.insertive_asset_offset.apply(
-            self.insertive_asset
-        )
-        receptive_asset_alignment_pos_w, receptive_asset_alignment_quat_w = self.receptive_asset_offset.apply(
-            self.receptive_asset
-        )
-        insertive_asset_in_receptive_asset_frame_pos, insertive_asset_in_receptive_asset_frame_quat = (
-            math_utils.subtract_frame_transforms(
-                receptive_asset_alignment_pos_w,
-                receptive_asset_alignment_quat_w,
-                insertive_asset_alignment_pos_w,
-                insertive_asset_alignment_quat_w,
+        if self.success_mode == "stack_center":
+            insertive_pos_w = self.insertive_asset.data.root_pos_w
+            receptive_pos_w = self.receptive_asset.data.root_pos_w
+            xy_distance = torch.norm(insertive_pos_w[:, :2] - receptive_pos_w[:, :2], dim=1)
+            z_distance = torch.abs((insertive_pos_w[:, 2] - receptive_pos_w[:, 2]) - self.stack_height)
+            self.xyz_distance[:] = torch.sqrt(torch.square(xy_distance) + torch.square(z_distance))
+            self.euler_xy_distance[:] = 0.0
+        else:
+            insertive_asset_alignment_pos_w, insertive_asset_alignment_quat_w = self.insertive_asset_offset.apply(
+                self.insertive_asset
             )
-        )
-        e_x, e_y, _ = math_utils.euler_xyz_from_quat(insertive_asset_in_receptive_asset_frame_quat)
-        self.euler_xy_distance[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
-        self.xyz_distance[:] = torch.norm(insertive_asset_in_receptive_asset_frame_pos, dim=1)
+            receptive_asset_alignment_pos_w, receptive_asset_alignment_quat_w = self.receptive_asset_offset.apply(
+                self.receptive_asset
+            )
+            insertive_asset_in_receptive_asset_frame_pos, insertive_asset_in_receptive_asset_frame_quat = (
+                math_utils.subtract_frame_transforms(
+                    receptive_asset_alignment_pos_w,
+                    receptive_asset_alignment_quat_w,
+                    insertive_asset_alignment_pos_w,
+                    insertive_asset_alignment_quat_w,
+                )
+            )
+            e_x, e_y, _ = math_utils.euler_xyz_from_quat(insertive_asset_in_receptive_asset_frame_quat)
+            self.euler_xy_distance[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
+            self.xyz_distance[:] = torch.norm(insertive_asset_in_receptive_asset_frame_pos, dim=1)
+
         self.position_aligned[:] = self.xyz_distance < self.success_position_threshold
-        self.orientation_aligned[:] = self.euler_xy_distance < self.success_orientation_threshold
+        if self.success_orientation_required and self.success_mode == "assembled_pose":
+            self.orientation_aligned[:] = self.euler_xy_distance < self.success_orientation_threshold
+        else:
+            self.orientation_aligned[:] = True
         self.metrics["average_rot_align_error"][:] = self.euler_xy_distance
         self.metrics["average_pos_align_error"][:] = self.xyz_distance
 

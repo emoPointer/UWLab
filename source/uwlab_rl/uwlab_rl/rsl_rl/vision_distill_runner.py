@@ -6,11 +6,13 @@
 from __future__ import annotations
 
 import os
+import random
 import statistics
 import time
 import torch
 import torch.nn as nn
 from collections import deque
+from pathlib import Path
 from tensordict import TensorDict
 
 from rsl_rl.algorithms import PPO
@@ -45,6 +47,9 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
             )
 
         obs = self.env.get_observations().to(self.device)
+        self._latest_obs = obs
+        self._maybe_create_camera_snapshot_window()
+        self._maybe_save_initial_camera_snapshot()
         self.train_mode()
 
         ep_infos = []
@@ -69,6 +74,7 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
                     if camera_recordings is not None:
                         self._record_wandb_camera_frames(camera_recordings)
                     obs, rewards, dones = (obs.to(self.device), rewards.to(self.device), dones.to(self.device))
+                    self._latest_obs = obs
                     self.alg.process_env_step(obs, rewards, dones, extras)
 
                     if self.log_dir is not None:
@@ -110,6 +116,119 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
 
         if self.log_dir is not None and not self.disable_logs:
             self.save(os.path.join(self.log_dir, f"model_{self.current_learning_iteration}.pt"))
+
+    def _maybe_create_camera_snapshot_window(self) -> None:
+        if getattr(self, "_camera_snapshot_window", None) is not None:
+            return
+        if os.environ.get("UWLAB_CAMERA_SNAPSHOT_BUTTON", "true").lower() in {"0", "false", "off", "no"}:
+            return
+        try:
+            import omni.ui as ui
+        except Exception as exc:
+            print(f"[WARN] Camera snapshot UI is unavailable: {exc}")
+            return
+
+        self._camera_snapshot_env_index_model = ui.SimpleIntModel(
+            int(os.environ.get("UWLAB_CAMERA_SNAPSHOT_ENV_INDEX", "0"))
+        )
+        self._camera_snapshot_status_model = ui.SimpleStringModel("Ready")
+        self._camera_snapshot_window = ui.Window(
+            "UWLab Vision Cameras", width=360, height=130, visible=True, dock_preference=ui.DockPreference.RIGHT_TOP
+        )
+        with self._camera_snapshot_window.frame:
+            with ui.VStack(spacing=6):
+                ui.Label("Save current vision policy inputs")
+                with ui.HStack(spacing=6):
+                    ui.Label("Env", width=34)
+                    ui.IntField(model=self._camera_snapshot_env_index_model, width=70)
+                    ui.Button("Save Env", clicked_fn=lambda: self._save_camera_snapshot_pair(random_env=False))
+                    ui.Button("Save Random", clicked_fn=lambda: self._save_camera_snapshot_pair(random_env=True))
+                ui.Label("", model=self._camera_snapshot_status_model)
+
+    def _maybe_save_initial_camera_snapshot(self) -> None:
+        if getattr(self, "_camera_snapshot_initial_saved", False):
+            return
+        mode = os.environ.get("UWLAB_CAMERA_SNAPSHOT_ON_START")
+        should_save = mode is not None and mode.lower() not in {"0", "false", "off", "no"}
+        should_save = should_save or (mode is None and os.environ.get("UWLAB_CAMERA_SNAPSHOT_DIR") is not None)
+        if not should_save:
+            return
+        self._camera_snapshot_initial_saved = True
+        self._save_camera_snapshot_pair(random_env=False)
+
+    def _save_camera_snapshot_pair(self, random_env: bool = False) -> None:
+        obs = getattr(self, "_latest_obs", None)
+        if obs is None:
+            self._set_camera_snapshot_status("No observation available yet.")
+            return
+        try:
+            policy_obs = obs["policy"]
+            num_envs = int(self.env.num_envs)
+            env_index_model = getattr(self, "_camera_snapshot_env_index_model", None)
+            requested_env_index = (
+                int(env_index_model.as_int)
+                if env_index_model is not None
+                else int(os.environ.get("UWLAB_CAMERA_SNAPSHOT_ENV_INDEX", "0"))
+            )
+            env_index = random.randrange(num_envs) if random_env else max(0, min(requested_env_index, num_envs - 1))
+            if not random_env and env_index != requested_env_index and env_index_model is not None:
+                env_index_model.set_value(env_index)
+
+            output_dir = Path(
+                os.environ.get(
+                    "UWLAB_CAMERA_SNAPSHOT_DIR",
+                    str(Path(self.log_dir or "logs") / "camera_snapshots"),
+                )
+            )
+            output_dir.mkdir(parents=True, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            iteration = int(getattr(self, "current_learning_iteration", 0))
+            saved_paths = []
+            for term_name in ("external_rgb", "wrist_rgb"):
+                image = self._policy_image_to_uint8(policy_obs[term_name], env_index)
+                path = output_dir / f"{stamp}_iter{iteration:06d}_env{env_index:04d}_{term_name}.png"
+                self._write_png(path, image)
+                saved_paths.append(path)
+            self._set_camera_snapshot_status(
+                f"Saved env {env_index}: " + ", ".join(path.name for path in saved_paths)
+            )
+            print("[INFO] Saved vision camera snapshots: " + ", ".join(str(path) for path in saved_paths))
+        except Exception as exc:
+            self._set_camera_snapshot_status(f"Save failed: {exc}")
+            print(f"[WARN] Failed to save vision camera snapshots: {exc}")
+
+    def _set_camera_snapshot_status(self, message: str) -> None:
+        status_model = getattr(self, "_camera_snapshot_status_model", None)
+        if status_model is not None:
+            status_model.set_value(message)
+
+    @staticmethod
+    def _policy_image_to_uint8(image_tensor: torch.Tensor, env_index: int):
+        import numpy as np
+
+        image = image_tensor.detach().cpu()
+        if image.ndim == 5:
+            image = image[env_index, -1]
+        elif image.ndim == 4:
+            image = image[env_index]
+        if image.ndim != 3:
+            raise ValueError(f"Expected image tensor with 3 dims after env selection, got {tuple(image.shape)}.")
+        if image.shape[0] in (1, 3, 4):
+            image = image.permute(1, 2, 0)
+        image = image[..., :3]
+
+        array = image.numpy()
+        if array.dtype == np.uint8:
+            return array
+        if float(np.nanmax(array)) <= 1.0:
+            array = array * 255.0
+        return np.clip(array, 0, 255).astype(np.uint8)
+
+    @staticmethod
+    def _write_png(path: Path, image) -> None:
+        import imageio.v2 as imageio
+
+        imageio.imwrite(path, image)
 
     def log(self, locs: dict, width: int = 80, pad: int = 35) -> None:
         """Log training stats and tolerate runners without RND bookkeeping."""

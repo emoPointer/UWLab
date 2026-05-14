@@ -1432,8 +1432,10 @@ def randomize_backdrop_visuals(
     table_cfg: SceneEntityCfg,
     backdrop_asset_names: Sequence[str],
     backdrop_table_relative_poses: Sequence[tuple[float, float, float, float, float, float, float]],
+    table_pose: tuple[float, float, float, float, float, float, float] | None = None,
     backdrop_position_jitter_m: float = 0.0,
     backdrop_color_range: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None,
+    external_camera_table_relative_pose: tuple[float, float, float, float, float, float, float] | None = None,
 ) -> None:
     """Randomize deploy-style backdrop panel positions and shared visual color."""
     if env_ids is None or isinstance(env_ids, slice):
@@ -1444,7 +1446,18 @@ def randomize_backdrop_visuals(
         raise ValueError("backdrop_asset_names and backdrop_table_relative_poses must have the same length.")
 
     table: RigidObject = env.scene[table_cfg.name]
-    table_root_pose = table.data.root_pose_w[env_ids].clone()
+    if table_pose is not None:
+        table_root_pose = _pose_tensor(table_pose, env, env_ids)
+        _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids)
+    else:
+        table_root_pose = table.data.root_pose_w[env_ids].clone()
+    if external_camera_table_relative_pose is not None:
+        _sync_sibling_xform_pose(
+            "/World/envs/env_{env_id}/Table/external_cam",
+            table_root_pose,
+            env_ids,
+            relative_pose=external_camera_table_relative_pose,
+        )
 
     backdrop_group_jitter = None
     if backdrop_position_jitter_m > 0.0:
@@ -1473,6 +1486,47 @@ def randomize_backdrop_visuals(
         if shared_backdrop_colors is not None:
             _set_rigid_root_visual_color(backdrop, shared_backdrop_colors, env_ids)
 
+    env.scene.write_data_to_sim()
+
+
+def align_task_pair_to_workspace(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    insertive_object_cfg: SceneEntityCfg,
+    receptive_object_cfg: SceneEntityCfg,
+    receptive_object_pose: tuple[float, float, float, float, float, float, float],
+    workspace_x_range: Sequence[float] | None = None,
+    workspace_y_range: Sequence[float] | None = None,
+    sync_visuals: bool = True,
+) -> None:
+    """Place the receptive object in the workspace and move the insertive object with the same delta."""
+    if env_ids is None or isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if len(env_ids) == 0:
+        return
+    if (workspace_x_range is None) != (workspace_y_range is None):
+        raise ValueError("workspace_x_range and workspace_y_range must be provided together.")
+
+    insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
+    receptive_object: RigidObject = env.scene[receptive_object_cfg.name]
+
+    insertive_pose = insertive_object.data.root_pose_w[env_ids].clone()
+    receptive_pose_before_align = receptive_object.data.root_pose_w[env_ids].clone()
+    receptive_root_pose = _pose_tensor(receptive_object_pose, env, env_ids)
+    if workspace_x_range is not None and workspace_y_range is not None:
+        x_min, x_max = workspace_x_range
+        y_min, y_max = workspace_y_range
+        receptive_root_pose[:, 0] = env.scene.env_origins[env_ids, 0] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(x_min), float(x_max))
+        receptive_root_pose[:, 1] = env.scene.env_origins[env_ids, 1] + torch.empty(
+            (len(env_ids),), dtype=torch.float32, device=env.device
+        ).uniform_(float(y_min), float(y_max))
+
+    object_delta = receptive_root_pose[:, :3] - receptive_pose_before_align[:, :3]
+    insertive_pose[:, :3] += object_delta
+    _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids, sync_visuals=sync_visuals)
+    _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids, sync_visuals=sync_visuals)
     env.scene.write_data_to_sim()
 
 
@@ -1567,6 +1621,7 @@ def align_deploy_scene_to_robosuite_table(
     backdrop_position_jitter_m: float = 0.0,
     backdrop_color_range: tuple[tuple[float, float, float], tuple[float, float, float]] | None = None,
     external_camera_table_relative_pose: tuple[float, float, float, float, float, float, float] | None = None,
+    sync_visuals: bool = True,
     log_once: bool = False,
     log_every_reset: bool = False,
 ) -> None:
@@ -1599,7 +1654,7 @@ def align_deploy_scene_to_robosuite_table(
         )
         robot_xy_jitter[:, 2] = 0.0
         robot_pose[:, :2] += robot_xy_jitter[:, :2]
-    _write_articulation_root_pose_with_visual_sync(robot, robot_pose, env_ids)
+    _write_articulation_root_pose_with_visual_sync(robot, robot_pose, env_ids, sync_visuals=sync_visuals)
 
     insertive_pose = insertive_object.data.root_pose_w[env_ids].clone()
     insertive_pose[:, :3] += translation_delta
@@ -1607,8 +1662,8 @@ def align_deploy_scene_to_robosuite_table(
     receptive_pose_after_base_align[:, :3] += translation_delta
 
     table_root_pose = _pose_tensor(table_pose, env, env_ids)
-    _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids)
-    if external_camera_table_relative_pose is not None:
+    _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids, sync_visuals=sync_visuals)
+    if sync_visuals and external_camera_table_relative_pose is not None:
         _sync_sibling_xform_pose(
             "/World/envs/env_{env_id}/Table/external_cam",
             table_root_pose,
@@ -1647,7 +1702,7 @@ def align_deploy_scene_to_robosuite_table(
             backdrop_pose[:, :3] = table_root_pose[:, :3] + backdrop_relative_pose[:, :3]
             if backdrop_group_jitter is not None:
                 backdrop_pose[:, :3] += backdrop_group_jitter
-            _write_rigid_root_pose_with_visual_sync(backdrop, backdrop_pose, env_ids)
+            _write_rigid_root_pose_with_visual_sync(backdrop, backdrop_pose, env_ids, sync_visuals=sync_visuals)
             if shared_backdrop_colors is not None:
                 _set_rigid_root_visual_color(backdrop, shared_backdrop_colors, env_ids)
 
@@ -1664,8 +1719,8 @@ def align_deploy_scene_to_robosuite_table(
 
     object_delta = receptive_root_pose[:, :3] - receptive_pose_after_base_align[:, :3]
     insertive_pose[:, :3] += object_delta
-    _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids)
-    _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids)
+    _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids, sync_visuals=sync_visuals)
+    _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids, sync_visuals=sync_visuals)
 
     shared_task_object_colors = None
     if task_object_color_range is not None:
@@ -1793,6 +1848,16 @@ class RejectInitialAssemblySuccessReset(ManagerTermBase):
         task_command = env.command_manager.get_term("task_command")
         success_position_threshold = task_command.success_position_threshold
         success_orientation_threshold = task_command.success_orientation_threshold
+        success_orientation_required = task_command.success_orientation_required
+        success_mode = task_command.success_mode
+
+        if success_mode == "stack_center":
+            insertive_pos_w = self.insertive_object.data.root_pos_w
+            receptive_pos_w = self.receptive_object.data.root_pos_w
+            xy_distance = torch.norm(insertive_pos_w[:, :2] - receptive_pos_w[:, :2], dim=1)
+            z_distance = torch.abs((insertive_pos_w[:, 2] - receptive_pos_w[:, 2]) - task_command.stack_height)
+            xyz_distance = torch.sqrt(torch.square(xy_distance) + torch.square(z_distance))
+            return xyz_distance < success_position_threshold
 
         insertive_pos_w, insertive_quat_w = self.insertive_asset_offset.apply(self.insertive_object)
         receptive_pos_w, receptive_quat_w = self.receptive_asset_offset.apply(self.receptive_object)
@@ -1805,7 +1870,10 @@ class RejectInitialAssemblySuccessReset(ManagerTermBase):
         e_x, e_y, _ = math_utils.euler_xyz_from_quat(rel_quat)
         euler_xy_distance = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
         xyz_distance = torch.norm(rel_pos, dim=1)
-        return (xyz_distance < success_position_threshold) & (euler_xy_distance < success_orientation_threshold)
+        success = xyz_distance < success_position_threshold
+        if success_orientation_required:
+            success = success & (euler_xy_distance < success_orientation_threshold)
+        return success
 
 
 class FixedRobotWorkspaceTaskPairReset(ManagerTermBase):

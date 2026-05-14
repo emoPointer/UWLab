@@ -29,6 +29,23 @@ from .rl_state_cfg import (
 )
 
 
+VISION_TABLE_POSE = (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0)
+VISION_BACKDROP_TABLE_RELATIVE_POSES = (
+    (-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0),
+    (-0.05, 0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+    (-0.05, -0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+)
+VISION_BACKDROP_ASSET_NAMES = (
+    "curtain_back",
+    "curtain_left",
+    "curtain_right",
+)
+VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE = (0.517, 0.327, 0.589, 0.3604, 0.2030, 0.5000, 0.7609)
+VISION_RECEPTIVE_OBJECT_POSE = (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0)
+VISION_WORKSPACE_X_RANGE = (-0.4, -0.2)
+VISION_WORKSPACE_Y_RANGE = (-0.3, -0.1)
+
+
 @configclass
 class VisionSceneCfg(DeployRlStateSceneCfg):
     """Deploy-style scene plus cameras used by the vision student."""
@@ -45,18 +62,24 @@ class VisionTrainEventCfg(TrainEventCfg):
         mode="reset",
         params={
             "table_cfg": SceneEntityCfg("table"),
-            "backdrop_asset_names": (
-                "curtain_back",
-                "curtain_left",
-                "curtain_right",
-            ),
-            "backdrop_table_relative_poses": (
-                (-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0),
-                (-0.05, 0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
-                (-0.05, -0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
-            ),
+            "table_pose": VISION_TABLE_POSE,
+            "backdrop_asset_names": VISION_BACKDROP_ASSET_NAMES,
+            "backdrop_table_relative_poses": VISION_BACKDROP_TABLE_RELATIVE_POSES,
             "backdrop_position_jitter_m": 0.02,
             "backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+            "external_camera_table_relative_pose": VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE,
+        },
+    )
+
+    align_task_pair_to_workspace = EventTerm(
+        func=task_mdp.align_task_pair_to_workspace,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE,
+            "workspace_x_range": VISION_WORKSPACE_X_RANGE,
+            "workspace_y_range": VISION_WORKSPACE_Y_RANGE,
         },
     )
 
@@ -69,6 +92,36 @@ class VisionTrainEventCfg(TrainEventCfg):
             "rotation_range": (0.0, 360.0),
             "pitch_range": (-10.0, 10.0),
             "roll_range": (-5.0, 5.0),
+        },
+    )
+
+
+@configclass
+class VisionEvalEventCfg(TrainEvalEventCfg):
+    """Vision eval events with corrected visual table/backdrop placement."""
+
+    sync_visual_table_and_backdrop = EventTerm(
+        func=task_mdp.randomize_backdrop_visuals,
+        mode="reset",
+        params={
+            "table_cfg": SceneEntityCfg("table"),
+            "table_pose": VISION_TABLE_POSE,
+            "backdrop_asset_names": VISION_BACKDROP_ASSET_NAMES,
+            "backdrop_table_relative_poses": VISION_BACKDROP_TABLE_RELATIVE_POSES,
+            "backdrop_position_jitter_m": 0.0,
+            "external_camera_table_relative_pose": VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE,
+        },
+    )
+
+    align_task_pair_to_workspace = EventTerm(
+        func=task_mdp.align_task_pair_to_workspace,
+        mode="reset",
+        params={
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE,
+            "workspace_x_range": VISION_WORKSPACE_X_RANGE,
+            "workspace_y_range": VISION_WORKSPACE_Y_RANGE,
         },
     )
 
@@ -135,7 +188,7 @@ class VisionObservationsCfg:
 class Arx5OSCVisionTrainCfg(Arx5RlStateCfg):
     """Vision student training config for online PPO distillation."""
 
-    scene: VisionSceneCfg = VisionSceneCfg(num_envs=128, env_spacing=1.5)
+    scene: VisionSceneCfg = VisionSceneCfg(num_envs=128, env_spacing=3.0)
     observations: VisionObservationsCfg = VisionObservationsCfg()
     events: VisionTrainEventCfg = VisionTrainEventCfg()
     actions: Arx5OSCTrainAction = Arx5OSCTrainAction()
@@ -145,4 +198,4 @@ class Arx5OSCVisionTrainCfg(Arx5RlStateCfg):
 class Arx5OSCVisionPlayCfg(Arx5OSCVisionTrainCfg):
     """Vision student play/evaluation config."""
 
-    events: TrainEvalEventCfg = TrainEvalEventCfg()
+    events: VisionEvalEventCfg = VisionEvalEventCfg()

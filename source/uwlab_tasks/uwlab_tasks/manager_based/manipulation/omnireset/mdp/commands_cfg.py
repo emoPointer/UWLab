@@ -31,3 +31,7 @@ class TaskCommandCfg(TaskDependentCommandCfg):
     receptive_asset_cfg: SceneEntityCfg = MISSING
 
     success_threshold_scale: float = 1.0
+
+    success_orientation_required: bool = True
+
+    success_mode: str = "assembled_pose"

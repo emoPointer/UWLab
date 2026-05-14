@@ -16,6 +16,7 @@ WANDB_CAMERA_VIDEO_FPS="${WANDB_CAMERA_VIDEO_FPS:-10}"
 DISTILL_LAMBDA_INITIAL="${DISTILL_LAMBDA_INITIAL:-1.0}"
 DISTILL_LAMBDA_FINAL="${DISTILL_LAMBDA_FINAL:-0.05}"
 DISTILL_DECAY_ITERATIONS="${DISTILL_DECAY_ITERATIONS:-8000}"
+SUCCESS_THRESHOLD_SCALE="${SUCCESS_THRESHOLD_SCALE:-2.0}"
 
 python scripts/reinforcement_learning/rsl_rl/train.py \
     --task OmniReset-Arx5-OSC-Vision-v0 \
@@ -36,6 +37,9 @@ python scripts/reinforcement_learning/rsl_rl/train.py \
     agent.algorithm.distillation.decay_iterations="$DISTILL_DECAY_ITERATIONS" \
     env.scene.insertive_object=cube \
     env.scene.receptive_object=cube \
+    env.commands.task_command.success_mode=stack_center \
+    env.commands.task_command.success_orientation_required=false \
+    env.commands.task_command.success_threshold_scale="$SUCCESS_THRESHOLD_SCALE" \
     env.events.set_cube_stack_colors.params.insertive_object_color='[0.0,1.0,0.0]' \
     env.events.set_cube_stack_colors.params.receptive_object_color='[1.0,0.0,0.0]' \
     env.events.reset_from_reset_states.params.dataset_dir="$DATASET_DIR" \

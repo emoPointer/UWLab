@@ -51,6 +51,11 @@ ROBOSUITE_CAMERA_HEIGHT = 480
 
 ROBOSUITE_WRIST_CAMERA_POS = (0.0, 0.0, 0.0)
 ROBOSUITE_WRIST_CAMERA_ROT = (1.0, 0.0, 0.0, 0.0)
+ROBOSUITE_ROBOT_BASE_POSE = (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0)
+ROBOSUITE_TABLE_POSE = (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0)
+ROBOSUITE_RECEPTIVE_OBJECT_POSE = (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0)
+ROBOSUITE_WORKSPACE_X_RANGE = (-0.4, -0.2)
+ROBOSUITE_WORKSPACE_Y_RANGE = (-0.3, -0.1)
 
 
 # ============================================================================
@@ -335,6 +340,31 @@ class TrainEventCfg(BaseEventCfg):
             ],
             "probs": [0.25, 0.25, 0.25, 0.25],
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
+        },
+    )
+
+
+@configclass
+class CubeStackTrainEventCfg(TrainEventCfg):
+    """Cube-stack state training events with deploy/vision workspace alignment."""
+
+    set_cube_stack_colors = None
+
+    align_cube_stack_scene_to_robosuite_table = EventTerm(
+        func=task_mdp.align_deploy_scene_to_robosuite_table,
+        mode="reset",
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "table_cfg": SceneEntityCfg("table"),
+            "training_robot_base_pose": ROBOSUITE_ROBOT_BASE_POSE,
+            "robosuite_robot_base_pose": ROBOSUITE_ROBOT_BASE_POSE,
+            "table_pose": ROBOSUITE_TABLE_POSE,
+            "receptive_object_pose": ROBOSUITE_RECEPTIVE_OBJECT_POSE,
+            "workspace_x_range": ROBOSUITE_WORKSPACE_X_RANGE,
+            "workspace_y_range": ROBOSUITE_WORKSPACE_Y_RANGE,
+            "sync_visuals": False,
         },
     )
 
@@ -888,6 +918,14 @@ class Arx5RlStateCfg(ManagerBasedRLEnvCfg):
 class Arx5OSCTrainCfg(Arx5RlStateCfg):
     events: TrainEventCfg = TrainEventCfg()
     actions: Arx5OSCTrainAction = Arx5OSCTrainAction()
+
+
+@configclass
+class Arx5OSCCubeStackTrainCfg(Arx5OSCTrainCfg):
+    """State-policy cube-stack training with the same workspace alignment as vision training."""
+
+    scene: RlStateSceneCfg = RlStateSceneCfg(num_envs=128, env_spacing=3.0)
+    events: CubeStackTrainEventCfg = CubeStackTrainEventCfg()
 
 
 # Stage 2: Finetune (explicit actuator, curriculum ramps sysid)

@@ -105,6 +105,11 @@ class ProgressContext(ManagerTermBase):
         self.euler_xy_distance = torch.zeros((env.num_envs), device=env.device)
         self.xyz_distance = torch.zeros((env.num_envs), device=env.device)
         self.success = torch.zeros((self._env.num_envs), dtype=torch.bool, device=self._env.device)
+        self.success_orientation_required = True
+        self.success_mode = "assembled_pose"
+        self.stack_height = abs(float(self.insertive_asset_offset.pos[2])) + abs(
+            float(self.receptive_asset_offset.pos[2])
+        )
         self.continuous_success_counter = torch.zeros((self._env.num_envs), dtype=torch.int32, device=self._env.device)
 
         success_monitor_cfg = SuccessMonitorCfg(monitored_history_len=100, num_monitored_data=1, device=env.device)
@@ -124,26 +129,41 @@ class ProgressContext(ManagerTermBase):
         task_command: TaskCommand = env.command_manager.get_term(command_context)
         success_position_threshold = task_command.success_position_threshold
         success_orientation_threshold = task_command.success_orientation_threshold
-        insertive_asset_alignment_pos_w, insertive_asset_alignment_quat_w = self.insertive_asset_offset.apply(
-            self.insertive_asset
-        )
-        receptive_asset_alignment_pos_w, receptive_asset_alignment_quat_w = self.receptive_asset_offset.apply(
-            self.receptive_asset
-        )
-        insertive_asset_in_receptive_asset_frame_pos, insertive_asset_in_receptive_asset_frame_quat = (
-            math_utils.subtract_frame_transforms(
-                receptive_asset_alignment_pos_w,
-                receptive_asset_alignment_quat_w,
-                insertive_asset_alignment_pos_w,
-                insertive_asset_alignment_quat_w,
+        self.success_orientation_required = task_command.success_orientation_required
+        self.success_mode = task_command.success_mode
+
+        if self.success_mode == "stack_center":
+            insertive_pos_w = self.insertive_asset.data.root_pos_w
+            receptive_pos_w = self.receptive_asset.data.root_pos_w
+            xy_distance = torch.norm(insertive_pos_w[:, :2] - receptive_pos_w[:, :2], dim=1)
+            z_distance = torch.abs((insertive_pos_w[:, 2] - receptive_pos_w[:, 2]) - self.stack_height)
+            self.xyz_distance[:] = torch.sqrt(torch.square(xy_distance) + torch.square(z_distance))
+            self.euler_xy_distance[:] = 0.0
+        else:
+            insertive_asset_alignment_pos_w, insertive_asset_alignment_quat_w = self.insertive_asset_offset.apply(
+                self.insertive_asset
             )
-        )
-        # yaw could be different
-        e_x, e_y, _ = math_utils.euler_xyz_from_quat(insertive_asset_in_receptive_asset_frame_quat)
-        self.euler_xy_distance[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
-        self.xyz_distance[:] = torch.norm(insertive_asset_in_receptive_asset_frame_pos, dim=1)
+            receptive_asset_alignment_pos_w, receptive_asset_alignment_quat_w = self.receptive_asset_offset.apply(
+                self.receptive_asset
+            )
+            insertive_asset_in_receptive_asset_frame_pos, insertive_asset_in_receptive_asset_frame_quat = (
+                math_utils.subtract_frame_transforms(
+                    receptive_asset_alignment_pos_w,
+                    receptive_asset_alignment_quat_w,
+                    insertive_asset_alignment_pos_w,
+                    insertive_asset_alignment_quat_w,
+                )
+            )
+            # yaw could be different
+            e_x, e_y, _ = math_utils.euler_xyz_from_quat(insertive_asset_in_receptive_asset_frame_quat)
+            self.euler_xy_distance[:] = math_utils.wrap_to_pi(e_x).abs() + math_utils.wrap_to_pi(e_y).abs()
+            self.xyz_distance[:] = torch.norm(insertive_asset_in_receptive_asset_frame_pos, dim=1)
+
         self.position_aligned[:] = self.xyz_distance < success_position_threshold
-        self.orientation_aligned[:] = self.euler_xy_distance < success_orientation_threshold
+        if self.success_orientation_required and self.success_mode == "assembled_pose":
+            self.orientation_aligned[:] = self.euler_xy_distance < success_orientation_threshold
+        else:
+            self.orientation_aligned[:] = True
         self.success[:] = self.orientation_aligned & self.position_aligned
 
         # Update continuous success counter
@@ -164,19 +184,22 @@ def dense_success_reward(env: ManagerBasedRLEnv, std: float, context: str = "pro
     context_term: ManagerTermBase = env.reward_manager.get_term_cfg(context).func  # type: ignore
     angle_diff: torch.Tensor = getattr(context_term, "euler_xy_distance")
     xyz_distance: torch.Tensor = getattr(context_term, "xyz_distance")
+    success_orientation_required: bool = getattr(context_term, "success_orientation_required", True)
+    success_mode: str = getattr(context_term, "success_mode", "assembled_pose")
 
     # Normalize the distances by std
-    angle_diff = torch.exp(-angle_diff / std)
     xyz_distance = torch.exp(-xyz_distance / std)
+    if not success_orientation_required or success_mode == "stack_center":
+        return xyz_distance
+    angle_diff = torch.exp(-angle_diff / std)
     stacked = torch.stack([angle_diff, xyz_distance], dim=0)
     return torch.mean(stacked, dim=0)
 
 
 def success_reward(env: ManagerBasedRLEnv, context: str = "progress_context") -> torch.Tensor:
     context_term: ManagerTermBase = env.reward_manager.get_term_cfg(context).func  # type: ignore
-    orientation_aligned: torch.Tensor = getattr(context_term, "orientation_aligned")
-    position_aligned: torch.Tensor = getattr(context_term, "position_aligned")
-    return torch.where(orientation_aligned & position_aligned, 1.0, 0.0)
+    success: torch.Tensor = getattr(context_term, "success")
+    return torch.where(success, 1.0, 0.0)
 
 
 def action_l2_clamped(env: ManagerBasedRLEnv) -> torch.Tensor:

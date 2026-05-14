@@ -90,6 +90,16 @@ gym.register(
     },
 )
 
+gym.register(
+    id="OmniReset-Arx5-OSC-CubeStack-State-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_state_cfg:Arx5OSCCubeStackTrainCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_cfg:Base_PPORunnerCfg",
+    },
+)
+
 # ============================================================================
 # RL vision distillation (student vision actor, privileged critic, state teacher)
 # ============================================================================

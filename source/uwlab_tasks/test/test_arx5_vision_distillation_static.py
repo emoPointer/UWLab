@@ -31,6 +31,7 @@ def test_arx5_vision_observations_match_v1_plan():
     rl_state_cfg = (ARX5_CONFIG_DIR / "rl_state_cfg.py").read_text()
 
     assert "class VisionSceneCfg(DeployRlStateSceneCfg)" in rl_vision_cfg
+    assert "scene: VisionSceneCfg = VisionSceneCfg(num_envs=128, env_spacing=3.0)" in rl_vision_cfg
     assert 'prim_path="{ENV_REGEX_NS}/Table/external_cam/Camera"' in rl_state_cfg
     assert 'prim_path="{ENV_REGEX_NS}/Robot/camera/Camera"' in rl_state_cfg
     assert 'prim_path="{ENV_REGEX_NS}/CurtainBack"' in rl_state_cfg
@@ -68,19 +69,44 @@ def test_arx5_vision_training_randomizes_backdrop_and_light_on_reset():
     assert "events: VisionTrainEventCfg = VisionTrainEventCfg()" in rl_vision_cfg
     assert "randomize_backdrop_visuals = EventTerm" in rl_vision_cfg
     assert "func=task_mdp.randomize_backdrop_visuals" in rl_vision_cfg
-    assert '"backdrop_asset_names": (' in rl_vision_cfg
+    assert '"table_pose": VISION_TABLE_POSE' in rl_vision_cfg
+    assert "VISION_TABLE_POSE = (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0)" in rl_vision_cfg
+    assert "(-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0)" in rl_vision_cfg
+    assert "VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE = (0.517, 0.327, 0.589" in rl_vision_cfg
+    assert "VISION_RECEPTIVE_OBJECT_POSE = (-0.30, -0.20, 0.84" in rl_vision_cfg
+    assert "VISION_WORKSPACE_X_RANGE = (-0.4, -0.2)" in rl_vision_cfg
+    assert "VISION_WORKSPACE_Y_RANGE = (-0.3, -0.1)" in rl_vision_cfg
+    assert '"external_camera_table_relative_pose": VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE' in rl_vision_cfg
+    assert '"backdrop_asset_names": VISION_BACKDROP_ASSET_NAMES' in rl_vision_cfg
     assert '"curtain_back"' in rl_vision_cfg
     assert '"curtain_left"' in rl_vision_cfg
     assert '"curtain_right"' in rl_vision_cfg
     assert '"backdrop_position_jitter_m": 0.02' in rl_vision_cfg
     assert '"backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0))' in rl_vision_cfg
+    assert "align_task_pair_to_workspace = EventTerm" in rl_vision_cfg
+    assert "func=task_mdp.align_task_pair_to_workspace" in rl_vision_cfg
+    assert '"receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE' in rl_vision_cfg
+    assert '"workspace_x_range": VISION_WORKSPACE_X_RANGE' in rl_vision_cfg
+    assert '"workspace_y_range": VISION_WORKSPACE_Y_RANGE' in rl_vision_cfg
     assert "randomize_sky_light = EventTerm" in rl_vision_cfg
     assert "func=task_mdp.randomize_dome_light" in rl_vision_cfg
     assert '"intensity_range": (800.0, 3500.0)' in rl_vision_cfg
     assert '"rotation_range": (0.0, 360.0)' in rl_vision_cfg
     assert '"pitch_range": (-10.0, 10.0)' in rl_vision_cfg
     assert '"roll_range": (-5.0, 5.0)' in rl_vision_cfg
+    assert "class VisionEvalEventCfg(TrainEvalEventCfg)" in rl_vision_cfg
+    assert "events: VisionEvalEventCfg = VisionEvalEventCfg()" in rl_vision_cfg
+    assert "sync_visual_table_and_backdrop = EventTerm" in rl_vision_cfg
     assert "def randomize_backdrop_visuals(" in events_py
+    assert "table_pose: tuple[float, float, float, float, float, float, float] | None = None" in events_py
+    assert "table_root_pose = _pose_tensor(table_pose, env, env_ids)" in events_py
+    assert "external_camera_table_relative_pose" in events_py
+    assert '"/World/envs/env_{env_id}/Table/external_cam"' in events_py
+    assert "relative_pose=external_camera_table_relative_pose" in events_py
+    assert "def align_task_pair_to_workspace(" in events_py
+    assert "object_delta = receptive_root_pose[:, :3] - receptive_pose_before_align[:, :3]" in events_py
+    assert "_write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids" in events_py
+    assert "_write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids" in events_py
     assert "def randomize_dome_light(" in events_py
     assert "_apply_dome_light_rotation(light_prim, rotation_range)" in events_py
 
@@ -122,6 +148,15 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     assert "teacher_checkpoint" in runner
     assert "teacher.load_state_dict" in runner
     assert "No teacher checkpoint configured; using inference-only placeholder teacher" in runner
+    assert "UWLab Vision Cameras" in runner
+    assert "Save Random" in runner
+    assert "UWLAB_CAMERA_SNAPSHOT_DIR" in runner
+    assert "UWLAB_CAMERA_SNAPSHOT_BUTTON" in runner
+    assert "UWLAB_CAMERA_SNAPSHOT_ON_START" in runner
+    assert "def _maybe_save_initial_camera_snapshot" in runner
+    assert "def _save_camera_snapshot_pair" in runner
+    assert "def _policy_image_to_uint8" in runner
+    assert "imageio.imwrite(path, image)" in runner
     assert "def _log_wandb_camera_videos" in runner
     assert "wandb.Video(video, fps=fps, format=\"mp4\")" in runner
     assert 'f"train_camera/{camera_name}"' in runner
@@ -153,5 +188,9 @@ def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides(
     assert 'agent.algorithm.distillation.lambda_final="$DISTILL_LAMBDA_FINAL"' in script
     assert "env.scene.insertive_object=cube" in script
     assert "env.scene.receptive_object=cube" in script
+    assert "env.commands.task_command.success_mode=stack_center" in script
+    assert "env.commands.task_command.success_orientation_required=false" in script
+    assert 'SUCCESS_THRESHOLD_SCALE="${SUCCESS_THRESHOLD_SCALE:-2.0}"' in script
+    assert 'env.commands.task_command.success_threshold_scale="$SUCCESS_THRESHOLD_SCALE"' in script
     assert "insertive_object_color='[0.0,1.0,0.0]'" in script
     assert "receptive_object_color='[1.0,0.0,0.0]'" in script
