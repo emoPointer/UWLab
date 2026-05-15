@@ -1057,6 +1057,7 @@ class MultiResetManager(ManagerTermBase):
         reset_types: list[str],
         probs: list[float],
         success: str | None = None,
+        sync_visuals: bool = False,
     ) -> None:
         if env_ids is None:
             env_ids = torch.arange(self.num_envs, device=self._env.device)
@@ -1096,7 +1097,12 @@ class MultiResetManager(ManagerTermBase):
                 0, self.num_states[dataset_idx], (len(current_env_ids),), device=self._env.device
             )
             states_to_reset_from = sample_from_nested_dict(self.datasets[dataset_idx], state_indices)
-            self._reset_to(states_to_reset_from["initial_state"], env_ids=current_env_ids, is_relative=True)
+            self._reset_to(
+                states_to_reset_from["initial_state"],
+                env_ids=current_env_ids,
+                is_relative=True,
+                sync_visuals=sync_visuals,
+            )
 
         # Reset velocities
         robot: Articulation = self._env.scene["robot"]
@@ -1107,6 +1113,7 @@ class MultiResetManager(ManagerTermBase):
         state: dict[str, dict[str, dict[str, torch.Tensor]]],
         env_ids: Sequence[int] | None = None,
         is_relative: bool = False,
+        sync_visuals: bool = False,
     ):
         """Resets the entities in the scene to the provided state.
 
@@ -1131,6 +1138,8 @@ class MultiResetManager(ManagerTermBase):
                 root_pose[:, :3] += self._env.scene.env_origins[env_ids]
             root_velocity = asset_state["root_velocity"].clone()
             articulation.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+            if sync_visuals:
+                _sync_articulation_root_visual_pose(articulation, root_pose, env_ids)
             articulation.write_root_velocity_to_sim(root_velocity, env_ids=env_ids)
             # joint state
             joint_position = asset_state["joint_position"].clone()
@@ -1161,6 +1170,8 @@ class MultiResetManager(ManagerTermBase):
                 root_pose[:, :3] += self._env.scene.env_origins[env_ids]
             root_velocity = asset_state["root_velocity"].clone()
             rigid_object.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+            if sync_visuals:
+                _sync_rigid_root_visual_pose(rigid_object, root_pose, env_ids)
             rigid_object.write_root_velocity_to_sim(root_velocity, env_ids=env_ids)
         # surface grippers
         for asset_name, surface_gripper in self._env.scene._surface_grippers.items():
@@ -1528,6 +1539,24 @@ def align_task_pair_to_workspace(
     _write_rigid_root_pose_with_visual_sync(insertive_object, insertive_pose, env_ids, sync_visuals=sync_visuals)
     _write_rigid_root_pose_with_visual_sync(receptive_object, receptive_root_pose, env_ids, sync_visuals=sync_visuals)
     env.scene.write_data_to_sim()
+
+
+def sync_task_pair_visuals_to_sim(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    insertive_object_cfg: SceneEntityCfg,
+    receptive_object_cfg: SceneEntityCfg,
+) -> None:
+    """Mirror current task object PhysX poses to USD/Fabric visuals without changing physics."""
+    if env_ids is None or isinstance(env_ids, slice):
+        env_ids = torch.arange(env.num_envs, device=env.device)
+    if len(env_ids) == 0:
+        return
+
+    insertive_object: RigidObject = env.scene[insertive_object_cfg.name]
+    receptive_object: RigidObject = env.scene[receptive_object_cfg.name]
+    _sync_rigid_root_visual_pose(insertive_object, insertive_object.data.root_pose_w[env_ids], env_ids)
+    _sync_rigid_root_visual_pose(receptive_object, receptive_object.data.root_pose_w[env_ids], env_ids)
 
 
 def randomize_dome_light(
@@ -2071,6 +2100,7 @@ class reset_root_states_uniform(ManagerTermBase):
         asset_cfgs: dict[str, SceneEntityCfg] = dict(),
         offset_asset_cfg: SceneEntityCfg = None,
         use_bottom_offset: bool = False,
+        sync_visuals: bool = False,
     ) -> None:
         # poses
         rand_pose_samples = math_utils.sample_uniform(
@@ -2113,7 +2143,13 @@ class reset_root_states_uniform(ManagerTermBase):
             velocities = root_states[:, 7:13] + rand_vel_samples
 
             # Set the new pose and velocity into the physics simulation
-            asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+            root_pose = torch.cat([positions, orientations], dim=-1)
+            asset.write_root_pose_to_sim(root_pose, env_ids=env_ids)
+            if sync_visuals:
+                if isinstance(asset, Articulation):
+                    _sync_articulation_root_visual_pose(asset, root_pose, env_ids)
+                elif isinstance(asset, RigidObject):
+                    _sync_rigid_root_visual_pose(asset, root_pose, env_ids)
             asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
 

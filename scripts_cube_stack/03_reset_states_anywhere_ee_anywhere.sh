@@ -4,10 +4,15 @@
 
 source "$(dirname "$0")/_common.sh"
 
+DATASET_DIR="${DATASET_DIR:-./Datasets/OmniReset}"
+NUM_ENVS="${NUM_ENVS:-8192}"
+NUM_RESET_STATES="${NUM_RESET_STATES:-10000}"
+
 python scripts_v2/tools/record_reset_states.py \
     --task OmniReset-Arx5-ObjectAnywhereEEAnywhere-v0 \
-    --num_envs 8192 \
-    --num_reset_states 10000 \
+    --num_envs "$NUM_ENVS" \
+    --num_reset_states "$NUM_RESET_STATES" \
+    --dataset_dir "$DATASET_DIR" \
     --headless \
     env.scene.insertive_object=cube \
     env.scene.receptive_object=cube \

@@ -71,15 +71,12 @@ class VisionTrainEventCfg(TrainEventCfg):
         },
     )
 
-    align_task_pair_to_workspace = EventTerm(
-        func=task_mdp.align_task_pair_to_workspace,
+    sync_task_pair_visuals_to_sim = EventTerm(
+        func=task_mdp.sync_task_pair_visuals_to_sim,
         mode="reset",
         params={
             "insertive_object_cfg": SceneEntityCfg("insertive_object"),
             "receptive_object_cfg": SceneEntityCfg("receptive_object"),
-            "receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE,
-            "workspace_x_range": VISION_WORKSPACE_X_RANGE,
-            "workspace_y_range": VISION_WORKSPACE_Y_RANGE,
         },
     )
 
@@ -113,15 +110,12 @@ class VisionEvalEventCfg(TrainEvalEventCfg):
         },
     )
 
-    align_task_pair_to_workspace = EventTerm(
-        func=task_mdp.align_task_pair_to_workspace,
+    sync_task_pair_visuals_to_sim = EventTerm(
+        func=task_mdp.sync_task_pair_visuals_to_sim,
         mode="reset",
         params={
             "insertive_object_cfg": SceneEntityCfg("insertive_object"),
             "receptive_object_cfg": SceneEntityCfg("receptive_object"),
-            "receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE,
-            "workspace_x_range": VISION_WORKSPACE_X_RANGE,
-            "workspace_y_range": VISION_WORKSPACE_Y_RANGE,
         },
     )
 

@@ -346,27 +346,9 @@ class TrainEventCfg(BaseEventCfg):
 
 @configclass
 class CubeStackTrainEventCfg(TrainEventCfg):
-    """Cube-stack state training events with deploy/vision workspace alignment."""
+    """Cube-stack state training events using reset states collected in the deploy/vision workspace."""
 
     set_cube_stack_colors = None
-
-    align_cube_stack_scene_to_robosuite_table = EventTerm(
-        func=task_mdp.align_deploy_scene_to_robosuite_table,
-        mode="reset",
-        params={
-            "robot_cfg": SceneEntityCfg("robot"),
-            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
-            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
-            "table_cfg": SceneEntityCfg("table"),
-            "training_robot_base_pose": ROBOSUITE_ROBOT_BASE_POSE,
-            "robosuite_robot_base_pose": ROBOSUITE_ROBOT_BASE_POSE,
-            "table_pose": ROBOSUITE_TABLE_POSE,
-            "receptive_object_pose": ROBOSUITE_RECEPTIVE_OBJECT_POSE,
-            "workspace_x_range": ROBOSUITE_WORKSPACE_X_RANGE,
-            "workspace_y_range": ROBOSUITE_WORKSPACE_Y_RANGE,
-            "sync_visuals": False,
-        },
-    )
 
 
 @configclass

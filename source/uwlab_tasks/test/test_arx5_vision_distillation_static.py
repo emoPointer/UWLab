@@ -83,11 +83,9 @@ def test_arx5_vision_training_randomizes_backdrop_and_light_on_reset():
     assert '"curtain_right"' in rl_vision_cfg
     assert '"backdrop_position_jitter_m": 0.02' in rl_vision_cfg
     assert '"backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0))' in rl_vision_cfg
-    assert "align_task_pair_to_workspace = EventTerm" in rl_vision_cfg
-    assert "func=task_mdp.align_task_pair_to_workspace" in rl_vision_cfg
-    assert '"receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE' in rl_vision_cfg
-    assert '"workspace_x_range": VISION_WORKSPACE_X_RANGE' in rl_vision_cfg
-    assert '"workspace_y_range": VISION_WORKSPACE_Y_RANGE' in rl_vision_cfg
+    assert "sync_task_pair_visuals_to_sim = EventTerm" in rl_vision_cfg
+    assert "func=task_mdp.sync_task_pair_visuals_to_sim" in rl_vision_cfg
+    assert "def sync_task_pair_visuals_to_sim(" in events_py
     assert "randomize_sky_light = EventTerm" in rl_vision_cfg
     assert "func=task_mdp.randomize_dome_light" in rl_vision_cfg
     assert '"intensity_range": (800.0, 3500.0)' in rl_vision_cfg

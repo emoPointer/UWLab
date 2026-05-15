@@ -77,3 +77,4 @@ tests/
 .uw-lab-docker-history
 *.pt
 *.hdf5
+*.usd
