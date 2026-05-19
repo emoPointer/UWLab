@@ -66,7 +66,9 @@ AppLauncher.add_app_launcher_args(parser)
 # parse the arguments
 args_cli, hydra_args = parser.parse_known_args()
 # always enable cameras when any rendering-dependent camera path is requested
-if args_cli.video or args_cli.record_deploy_cameras_until_reset:
+if args_cli.video or args_cli.record_deploy_cameras_until_reset or (
+    args_cli.task is not None and "Vision" in args_cli.task
+):
     args_cli.enable_cameras = True
 
 # clear out sys.argv for Hydra

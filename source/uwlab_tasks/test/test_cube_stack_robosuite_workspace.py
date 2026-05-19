@@ -153,3 +153,90 @@ def test_cube_stack_training_uses_local_recollected_cube_data():
     assert 'env.commands.task_command.success_threshold_scale="$SUCCESS_THRESHOLD_SCALE"' in script
     assert "env.events.reset_from_reset_states.params.dataset_dir=\"$DATASET_DIR\"" in script
     assert "DATASET_DIR=\"${DATASET_DIR:-./Datasets/OmniReset}\"" in script
+
+
+def test_state_policy_dataset_collection_randomizes_lighting():
+    script = (SCRIPTS_ROOT / "08_collect_state_policy_dataset.sh").read_text()
+    collect_py = (SCRIPTS_ROOT / "08_collect_state_policy_dataset.py").read_text()
+
+    assert 'NUM_ENVS="${NUM_ENVS:-4}"' in script
+    assert 'FIX_PHYSICS_DR="${FIX_PHYSICS_DR:-true}"' in script
+    assert 'FIX_CONTROL_DR="${FIX_CONTROL_DR:-true}"' in script
+    assert 'LIGHTWEIGHT_RENDER="${LIGHTWEIGHT_RENDER:-false}"' in script
+    assert 'DATASET_DIR="${DATASET_DIR:-./Datasets/OmniReset}"' in script
+    assert '--dataset_dir "$DATASET_DIR"' in script
+    assert "--fix_physics_dr_to_mean" in script
+    assert "--fix_control_dr_to_nominal" in script
+    assert "--lightweight_render" in script
+    assert 'RANDOMIZE_LIGHT="${RANDOMIZE_LIGHT:-true}"' in script
+    assert 'LIGHT_INTENSITY_MIN="${LIGHT_INTENSITY_MIN:-800.0}"' in script
+    assert 'LIGHT_INTENSITY_MAX="${LIGHT_INTENSITY_MAX:-3500.0}"' in script
+    assert 'LIGHT_YAW_MIN="${LIGHT_YAW_MIN:-0.0}"' in script
+    assert 'LIGHT_YAW_MAX="${LIGHT_YAW_MAX:-360.0}"' in script
+    assert 'LIGHT_PITCH_MIN="${LIGHT_PITCH_MIN:--10.0}"' in script
+    assert 'LIGHT_PITCH_MAX="${LIGHT_PITCH_MAX:-10.0}"' in script
+    assert 'LIGHT_ROLL_MIN="${LIGHT_ROLL_MIN:--5.0}"' in script
+    assert 'LIGHT_ROLL_MAX="${LIGHT_ROLL_MAX:-5.0}"' in script
+    assert "--randomize_light" in script
+    assert "--light_intensity_range" in script
+    assert "--light_yaw_range" in script
+    assert "--light_pitch_range" in script
+    assert "--light_roll_range" in script
+
+    assert 'parser.add_argument("--randomize_light", action="store_true", default=False)' in collect_py
+    assert 'parser.add_argument("--dataset_dir", type=str, default="./Datasets/OmniReset")' in collect_py
+    assert 'parser.add_argument("--light_intensity_range", type=float, nargs=2, default=(800.0, 3500.0))' in collect_py
+    assert "env_cfg.events.randomize_sky_light = EventTerm" in collect_py
+    assert "func=task_mdp.SharedDomeLightRandomizer" in collect_py
+    assert '"light_path": "/World/skyLight"' in collect_py
+    assert '"intensity_range": light_intensity_range' in collect_py
+    assert '"rotation_range": light_yaw_range' in collect_py
+    assert '"pitch_range": light_pitch_range' in collect_py
+    assert '"roll_range": light_roll_range' in collect_py
+
+
+def test_state_policy_dataset_collection_uses_anywhere_reset_dataset():
+    collect_py = (SCRIPTS_ROOT / "08_collect_state_policy_dataset.py").read_text()
+
+    assert "def _set_anywhere_reset_from_dataset(" in collect_py
+    assert "func=task_mdp.MultiResetManager" in collect_py
+    assert '"dataset_dir": dataset_dir' in collect_py
+    assert '"reset_types": ["ObjectAnywhereEEAnywhere"]' in collect_py
+    assert '"probs": [1.0]' in collect_py
+    assert '"sync_visuals": True' in collect_py
+    assert "FixedRobotWorkspaceTaskPairReset" not in collect_py
+    assert "env_cfg.events.align_deploy_scene_to_robosuite_table = None" in collect_py
+    assert "env_cfg.events.reject_initial_successful_resets = None" in collect_py
+    assert "env_cfg.events.randomize_backdrop_visuals = EventTerm" in collect_py
+    assert "func=task_mdp.randomize_backdrop_visuals" in collect_py
+    assert '"table_pose": ROBOSUITE_TABLE_POSE' in collect_py
+    assert '"external_camera_table_relative_pose": ROBOSUITE_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE' in collect_py
+
+
+def test_state_policy_dataset_collection_fixes_physics_and_control_dr():
+    collect_py = (SCRIPTS_ROOT / "08_collect_state_policy_dataset.py").read_text()
+
+    assert 'parser.add_argument("--fix_physics_dr_to_mean", action="store_true", default=False)' in collect_py
+    assert 'parser.add_argument("--fix_control_dr_to_nominal", action="store_true", default=False)' in collect_py
+    assert 'parser.add_argument("--lightweight_render", action="store_true", default=False)' in collect_py
+    assert "def _fix_physics_domain_randomization_to_mean(" in collect_py
+    assert "def _fix_control_domain_randomization_to_nominal(" in collect_py
+    assert "def _enable_lightweight_camera_rendering(" in collect_py
+    assert "env_cfg.sim.render.enable_dlssg = False" in collect_py
+    assert "env_cfg.sim.render.enable_reflections = False" in collect_py
+    assert "env_cfg.sim.render.enable_dl_denoiser = False" in collect_py
+    assert "env_cfg.sim.render.enable_ambient_occlusion = False" in collect_py
+    assert '"robot_material"' in collect_py
+    assert '"insertive_object_material"' in collect_py
+    assert '"receptive_object_material"' in collect_py
+    assert '"table_material"' in collect_py
+    assert 'term_cfg.params["static_friction_range"] = _midpoint_range' in collect_py
+    assert 'term_cfg.params["dynamic_friction_range"] = _midpoint_range' in collect_py
+    assert 'term_cfg.params["num_buckets"] = 1' in collect_py
+    assert '"randomize_robot_mass"' in collect_py
+    assert '"randomize_insertive_object_mass"' in collect_py
+    assert '"randomize_receptive_object_mass"' in collect_py
+    assert '"randomize_table_mass"' in collect_py
+    assert 'term_cfg.params["mass_distribution_params"] = _midpoint_range' in collect_py
+    assert 'term_cfg.params["stiffness_distribution_params"] = (1.0, 1.0)' in collect_py
+    assert 'term_cfg.params["damping_distribution_params"] = (1.0, 1.0)' in collect_py

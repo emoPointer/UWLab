@@ -150,6 +150,16 @@ gym.register(
 )
 
 gym.register(
+    id="OmniReset-Arx5-OSC-Vision-Deploy-Play-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.rl_vision_cfg:Arx5OSCVisionDeployPlayCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_vision_cfg:VisionDistill_PPORunnerCfg",
+    },
+)
+
+gym.register(
     id="OmniReset-Arx5-OSC-State-Deploy-Play-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,

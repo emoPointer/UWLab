@@ -27,18 +27,36 @@ DEFAULT_HYDRA_OVERRIDES = [
     "env.scene.receptive_object=cube",
 ]
 
+ROBOSUITE_TABLE_POSE = (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0)
+ROBOSUITE_BACKDROP_ASSET_NAMES = ("curtain_back", "curtain_left", "curtain_right")
+ROBOSUITE_BACKDROP_TABLE_RELATIVE_POSES = (
+    (-1.1, 0.0, -0.280375, 1.0, 0.0, 0.0, 0.0),
+    (-0.05, 0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+    (-0.05, -0.8, -0.280375, 0.707, 0.0, 0.0, -0.707),
+)
+ROBOSUITE_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE = (0.517, 0.327, 0.589, 0.3604, 0.2030, 0.5000, 0.7609)
+
 
 parser = argparse.ArgumentParser(description="Collect cube-stack state-policy data with an RSL-RL policy.")
 parser.add_argument("--task", type=str, default="OmniReset-Arx5-OSC-State-Deploy-Play-v0")
 parser.add_argument("--num_envs", type=int, default=4)
 parser.add_argument("--env_spacing", type=float, default=3.0)
 parser.add_argument("--num_demos", type=int, default=50)
+parser.add_argument("--dataset_dir", type=str, default="./Datasets/OmniReset")
 parser.add_argument("--output_file", type=str, default="./datasets/cube_stack_state_policy.hdf5")
 parser.add_argument("--seed", type=int, default=-1)
 parser.add_argument("--max_steps_per_demo", type=int, default=160)
 parser.add_argument("--save_failed", action="store_true", default=False)
 parser.add_argument("--real-time", action="store_true", default=False)
 parser.add_argument("--ee_body_name", type=str, default="link6")
+parser.add_argument("--fix_physics_dr_to_mean", action="store_true", default=False)
+parser.add_argument("--fix_control_dr_to_nominal", action="store_true", default=False)
+parser.add_argument("--lightweight_render", action="store_true", default=False)
+parser.add_argument("--randomize_light", action="store_true", default=False)
+parser.add_argument("--light_intensity_range", type=float, nargs=2, default=(800.0, 3500.0))
+parser.add_argument("--light_yaw_range", type=float, nargs=2, default=(0.0, 360.0))
+parser.add_argument("--light_pitch_range", type=float, nargs=2, default=(-10.0, 10.0))
+parser.add_argument("--light_roll_range", type=float, nargs=2, default=(-5.0, 5.0))
 parser.add_argument("--agent", type=str, default="rsl_rl_cfg_entry_point")
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
@@ -261,36 +279,108 @@ def _success_mask(unwrapped_env, dones: torch.Tensor) -> torch.Tensor:
     return success
 
 
-def _set_fixed_robot_workspace_reset(env_cfg: ManagerBasedRLEnvCfg) -> None:
+def _midpoint_range(values: tuple[float, float]) -> tuple[float, float]:
+    midpoint = 0.5 * (float(values[0]) + float(values[1]))
+    return (midpoint, midpoint)
+
+
+def _fix_physics_domain_randomization_to_mean(env_cfg: ManagerBasedRLEnvCfg) -> None:
+    material_terms = (
+        "robot_material",
+        "insertive_object_material",
+        "receptive_object_material",
+        "table_material",
+    )
+    for term_name in material_terms:
+        term_cfg = getattr(env_cfg.events, term_name, None)
+        if term_cfg is None:
+            continue
+        term_cfg.params["static_friction_range"] = _midpoint_range(term_cfg.params["static_friction_range"])
+        term_cfg.params["dynamic_friction_range"] = _midpoint_range(term_cfg.params["dynamic_friction_range"])
+        term_cfg.params["restitution_range"] = _midpoint_range(term_cfg.params["restitution_range"])
+        term_cfg.params["num_buckets"] = 1
+
+    mass_terms = (
+        "randomize_robot_mass",
+        "randomize_insertive_object_mass",
+        "randomize_receptive_object_mass",
+        "randomize_table_mass",
+    )
+    for term_name in mass_terms:
+        term_cfg = getattr(env_cfg.events, term_name, None)
+        if term_cfg is None:
+            continue
+        term_cfg.params["mass_distribution_params"] = _midpoint_range(term_cfg.params["mass_distribution_params"])
+        term_cfg.params["distribution"] = "uniform"
+
+
+def _fix_control_domain_randomization_to_nominal(env_cfg: ManagerBasedRLEnvCfg) -> None:
+    term_cfg = getattr(env_cfg.events, "randomize_gripper_actuator_parameters", None)
+    if term_cfg is None:
+        return
+    term_cfg.params["stiffness_distribution_params"] = (1.0, 1.0)
+    term_cfg.params["damping_distribution_params"] = (1.0, 1.0)
+    term_cfg.params["operation"] = "scale"
+    term_cfg.params["distribution"] = "uniform"
+
+
+def _enable_lightweight_camera_rendering(env_cfg: ManagerBasedRLEnvCfg) -> None:
+    env_cfg.sim.render.enable_dlssg = False
+    env_cfg.sim.render.enable_reflections = False
+    env_cfg.sim.render.enable_dl_denoiser = False
+    env_cfg.sim.render.enable_ambient_occlusion = False
+
+
+def _set_anywhere_reset_from_dataset(
+    env_cfg: ManagerBasedRLEnvCfg,
+    *,
+    dataset_dir: str,
+    randomize_light: bool = False,
+    light_intensity_range: tuple[float, float] = (800.0, 3500.0),
+    light_yaw_range: tuple[float, float] = (0.0, 360.0),
+    light_pitch_range: tuple[float, float] = (-10.0, 10.0),
+    light_roll_range: tuple[float, float] = (-5.0, 5.0),
+) -> None:
     env_cfg.events.reset_from_reset_states = EventTerm(
-        func=task_mdp.FixedRobotWorkspaceTaskPairReset,
+        func=task_mdp.MultiResetManager,
         mode="reset",
         params={
-            "robot_cfg": SceneEntityCfg("robot"),
-            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
-            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
-            "table_cfg": SceneEntityCfg("table"),
-            "robot_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
-            "table_pose": (0.0, 0.0, 0.799375, 1.0, 0.0, 0.0, 0.0),
-            "insertive_object_pose": (-0.30, -0.20, 0.87, 1.0, 0.0, 0.0, 0.0),
-            "receptive_object_pose": (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0),
-            "robot_xy_jitter_m": 0.0,
-            "workspace_x_range": (-0.4, -0.2),
-            "workspace_y_range": (-0.3, -0.1),
-            "insertive_workspace_x_range": (-0.4, -0.2),
-            "insertive_workspace_y_range": (-0.3, -0.1),
-            "insertive_object_color": (0.0, 1.0, 0.0),
-            "receptive_object_color": (1.0, 0.0, 0.0),
+            "dataset_dir": dataset_dir,
+            "reset_types": ["ObjectAnywhereEEAnywhere"],
+            "probs": [1.0],
             "success": "env.reward_manager.get_term_cfg('progress_context').func.success",
-            "log_every_reset": False,
             "sync_visuals": True,
         },
     )
     if hasattr(env_cfg.events, "align_deploy_scene_to_robosuite_table"):
-        align_params = env_cfg.events.align_deploy_scene_to_robosuite_table.params
-        align_params["task_object_color_range"] = None
-        align_params["insertive_object_color"] = (0.0, 1.0, 0.0)
-        align_params["receptive_object_color"] = (1.0, 0.0, 0.0)
+        env_cfg.events.align_deploy_scene_to_robosuite_table = None
+    if hasattr(env_cfg.events, "reject_initial_successful_resets"):
+        env_cfg.events.reject_initial_successful_resets = None
+    env_cfg.events.randomize_backdrop_visuals = EventTerm(
+        func=task_mdp.randomize_backdrop_visuals,
+        mode="reset",
+        params={
+            "table_cfg": SceneEntityCfg("table"),
+            "table_pose": ROBOSUITE_TABLE_POSE,
+            "backdrop_asset_names": ROBOSUITE_BACKDROP_ASSET_NAMES,
+            "backdrop_table_relative_poses": ROBOSUITE_BACKDROP_TABLE_RELATIVE_POSES,
+            "backdrop_position_jitter_m": 0.02,
+            "backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+            "external_camera_table_relative_pose": ROBOSUITE_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE,
+        },
+    )
+    if randomize_light:
+        env_cfg.events.randomize_sky_light = EventTerm(
+            func=task_mdp.SharedDomeLightRandomizer,
+            mode="reset",
+            params={
+                "light_path": "/World/skyLight",
+                "intensity_range": light_intensity_range,
+                "rotation_range": light_yaw_range,
+                "pitch_range": light_pitch_range,
+                "roll_range": light_roll_range,
+            },
+        )
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -306,7 +396,21 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     log_dir = os.path.dirname(checkpoint_path)
     env_cfg.log_dir = log_dir
     if isinstance(env_cfg, ManagerBasedRLEnvCfg):
-        _set_fixed_robot_workspace_reset(env_cfg)
+        if args_cli.lightweight_render:
+            _enable_lightweight_camera_rendering(env_cfg)
+        if args_cli.fix_physics_dr_to_mean:
+            _fix_physics_domain_randomization_to_mean(env_cfg)
+        if args_cli.fix_control_dr_to_nominal:
+            _fix_control_domain_randomization_to_nominal(env_cfg)
+        _set_anywhere_reset_from_dataset(
+            env_cfg,
+            dataset_dir=args_cli.dataset_dir,
+            randomize_light=args_cli.randomize_light,
+            light_intensity_range=tuple(args_cli.light_intensity_range),
+            light_yaw_range=tuple(args_cli.light_yaw_range),
+            light_pitch_range=tuple(args_cli.light_pitch_range),
+            light_roll_range=tuple(args_cli.light_roll_range),
+        )
 
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode=None)
     if isinstance(env.unwrapped, DirectMARLEnv):

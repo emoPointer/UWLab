@@ -405,8 +405,16 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
 
     def _construct_teacher(self, obs: TensorDict, teacher_obs_group: str) -> ActorCritic:
         teacher_checkpoint = self.alg_cfg.pop("teacher_checkpoint", "")
+        teacher_actor_hidden_dims = self.alg_cfg.pop("teacher_actor_hidden_dims", [512, 256, 128, 64])
+        teacher_critic_hidden_dims = self.alg_cfg.pop("teacher_critic_hidden_dims", [512, 256, 128, 64])
+        teacher_activation = self.alg_cfg.pop("teacher_activation", "elu")
+        teacher_init_noise_std = self.alg_cfg.pop("teacher_init_noise_std", 1.0)
+        teacher_noise_std_type = self.alg_cfg.pop("teacher_noise_std_type", "gsde")
+        teacher_state_dependent_std = self.alg_cfg.pop("teacher_state_dependent_std", False)
+        teacher_actor_obs_normalization = self.alg_cfg.pop("teacher_actor_obs_normalization", True)
+        teacher_critic_obs_normalization = self.alg_cfg.pop("teacher_critic_obs_normalization", True)
         if not teacher_checkpoint:
-            if self.log_dir is None:
+            if getattr(self, "log_dir", None) is None:
                 print("[INFO] No teacher checkpoint configured; using inference-only placeholder teacher.")
                 return _InferenceOnlyTeacher(self.env.num_actions).to(self.device)
             raise ValueError(
@@ -420,15 +428,6 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
                 teacher_checkpoint = retrieve_file_path(teacher_checkpoint)
             except Exception as exc:
                 raise FileNotFoundError(f"Teacher checkpoint not found: {teacher_checkpoint}") from exc
-
-        teacher_actor_hidden_dims = self.alg_cfg.pop("teacher_actor_hidden_dims", [512, 256, 128, 64])
-        teacher_critic_hidden_dims = self.alg_cfg.pop("teacher_critic_hidden_dims", [512, 256, 128, 64])
-        teacher_activation = self.alg_cfg.pop("teacher_activation", "elu")
-        teacher_init_noise_std = self.alg_cfg.pop("teacher_init_noise_std", 1.0)
-        teacher_noise_std_type = self.alg_cfg.pop("teacher_noise_std_type", "gsde")
-        teacher_state_dependent_std = self.alg_cfg.pop("teacher_state_dependent_std", False)
-        teacher_actor_obs_normalization = self.alg_cfg.pop("teacher_actor_obs_normalization", True)
-        teacher_critic_obs_normalization = self.alg_cfg.pop("teacher_critic_obs_normalization", True)
 
         teacher_obs_groups = {
             "policy": [teacher_obs_group],

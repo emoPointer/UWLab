@@ -21,11 +21,14 @@ from uwlab_tasks.manager_based.manipulation.omnireset.config.arx5.actions import
 
 from ... import mdp as task_mdp
 from .rl_state_cfg import (
+    DeployEvalEventCfg,
     Arx5RlStateCfg,
     DeployRlStateSceneCfg,
+    DeployTerminationsCfg,
     ObservationsCfg,
     TrainEvalEventCfg,
     TrainEventCfg,
+    ViewerCfg,
 )
 
 
@@ -121,6 +124,39 @@ class VisionEvalEventCfg(TrainEvalEventCfg):
 
 
 @configclass
+class VisionDeployEventCfg(DeployEvalEventCfg):
+    """Vision deploy events with deploy backdrop alignment and fixed cube colors."""
+
+    align_deploy_scene_to_robosuite_table = EventTerm(
+        func=task_mdp.align_deploy_scene_to_robosuite_table,
+        mode="reset",
+        params={
+            "robot_cfg": SceneEntityCfg("robot"),
+            "insertive_object_cfg": SceneEntityCfg("insertive_object"),
+            "receptive_object_cfg": SceneEntityCfg("receptive_object"),
+            "table_cfg": SceneEntityCfg("table"),
+            "training_robot_base_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
+            "robosuite_robot_base_pose": (-0.535, -0.21, 0.8, 1.0, 0.0, 0.0, 0.0),
+            "table_pose": VISION_TABLE_POSE,
+            "receptive_object_pose": VISION_RECEPTIVE_OBJECT_POSE,
+            "robot_xy_jitter_m": 0.02,
+            "workspace_x_range": VISION_WORKSPACE_X_RANGE,
+            "workspace_y_range": VISION_WORKSPACE_Y_RANGE,
+            "task_object_color_range": None,
+            "insertive_object_color": (0.0, 1.0, 0.0),
+            "receptive_object_color": (1.0, 0.0, 0.0),
+            "backdrop_asset_names": VISION_BACKDROP_ASSET_NAMES,
+            "backdrop_table_relative_poses": VISION_BACKDROP_TABLE_RELATIVE_POSES,
+            "backdrop_position_jitter_m": 0.02,
+            "backdrop_color_range": ((0.2, 0.2, 0.2), (1.0, 1.0, 1.0)),
+            "external_camera_table_relative_pose": VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE,
+            "log_once": True,
+            "log_every_reset": True,
+        },
+    )
+
+
+@configclass
 class VisionObservationsCfg:
     """Observation groups for vision-policy distillation."""
 
@@ -193,3 +229,20 @@ class Arx5OSCVisionPlayCfg(Arx5OSCVisionTrainCfg):
     """Vision student play/evaluation config."""
 
     events: VisionEvalEventCfg = VisionEvalEventCfg()
+
+
+@configclass
+class Arx5OSCVisionDeployPlayCfg(Arx5OSCVisionPlayCfg):
+    """Vision student deployment config with deploy scene and vision-policy inputs."""
+
+    scene: DeployRlStateSceneCfg = DeployRlStateSceneCfg(num_envs=32, env_spacing=1.5)
+    observations: VisionObservationsCfg = VisionObservationsCfg()
+    events: VisionDeployEventCfg = VisionDeployEventCfg()
+    terminations: DeployTerminationsCfg = DeployTerminationsCfg()
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(0.45, -1.15, 1.35),
+        lookat=(-0.30, -0.20, 0.84),
+        origin_type="world",
+        env_index=0,
+        asset_name="receptive_object",
+    )

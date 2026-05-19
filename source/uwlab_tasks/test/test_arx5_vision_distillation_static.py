@@ -21,8 +21,10 @@ def test_arx5_vision_task_is_registered_with_vision_distill_agent():
 
     assert 'id="OmniReset-Arx5-OSC-Vision-v0"' in init_py
     assert 'id="OmniReset-Arx5-OSC-Vision-Play-v0"' in init_py
+    assert 'id="OmniReset-Arx5-OSC-Vision-Deploy-Play-v0"' in init_py
     assert "rl_vision_cfg:Arx5OSCVisionTrainCfg" in init_py
     assert "rl_vision_cfg:Arx5OSCVisionPlayCfg" in init_py
+    assert "rl_vision_cfg:Arx5OSCVisionDeployPlayCfg" in init_py
     assert "rsl_rl_vision_cfg:VisionDistill_PPORunnerCfg" in init_py
 
 
@@ -49,6 +51,17 @@ def test_arx5_vision_observations_match_v1_plan():
     assert "self.flatten_history_dim = False" in rl_vision_cfg
     assert "class TeacherPolicyCfg(ObservationsCfg.PolicyCfg)" in rl_vision_cfg
     assert "teacher_policy: TeacherPolicyCfg = TeacherPolicyCfg()" in rl_vision_cfg
+    assert "class Arx5OSCVisionDeployPlayCfg(Arx5OSCVisionPlayCfg)" in rl_vision_cfg
+    assert "scene: DeployRlStateSceneCfg = DeployRlStateSceneCfg(num_envs=32, env_spacing=1.5)" in rl_vision_cfg
+    assert "observations: VisionObservationsCfg = VisionObservationsCfg()" in rl_vision_cfg
+    assert "events: VisionDeployEventCfg = VisionDeployEventCfg()" in rl_vision_cfg
+    assert "terminations: DeployTerminationsCfg = DeployTerminationsCfg()" in rl_vision_cfg
+    assert "class VisionDeployEventCfg(DeployEvalEventCfg)" in rl_vision_cfg
+    assert '"task_object_color_range": None' in rl_vision_cfg
+    assert '"insertive_object_color": (0.0, 1.0, 0.0)' in rl_vision_cfg
+    assert '"receptive_object_color": (1.0, 0.0, 0.0)' in rl_vision_cfg
+    assert '"backdrop_asset_names": VISION_BACKDROP_ASSET_NAMES' in rl_vision_cfg
+    assert '"external_camera_table_relative_pose": VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE' in rl_vision_cfg
 
 
 def test_arx5_vision_training_randomizes_backdrop_and_light_on_reset():
@@ -140,11 +153,13 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
 
     assert "VisionDistillOnPolicyRunner" in train_py
     assert "VisionDistillOnPolicyRunner" in play_py
+    assert 'args_cli.task is not None and "Vision" in args_cli.task' in play_py
     assert "Skipping flat JIT/ONNX export for structured vision policy" in play_py
     assert "class VisionDistillOnPolicyRunner(OnPolicyRunner)" in runner
     assert "ActorCritic(" in runner
     assert "teacher_checkpoint" in runner
     assert "teacher.load_state_dict" in runner
+    assert 'getattr(self, "log_dir", None) is None' in runner
     assert "No teacher checkpoint configured; using inference-only placeholder teacher" in runner
     assert "UWLab Vision Cameras" in runner
     assert "Save Random" in runner
@@ -171,6 +186,25 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     assert "supports_flat_export: bool = False" in actor_critic
 
 
+def test_multi_reset_manager_accepts_legacy_joint_state_widths_for_deploy():
+    events_py = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "mdp"
+        / "events.py"
+    ).read_text()
+
+    assert "def _match_articulation_joint_state_shape(" in events_py
+    assert "saved_joint_count > target_joint_count" in events_py
+    assert "joint_position[..., :target_joint_count]" in events_py
+    assert "Reset-state joint dimension mismatch" in events_py
+
+
 def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides():
     script = (REPO_ROOT / "scripts_cube_stack" / "07_train_vision_distill.sh").read_text()
 
@@ -192,3 +226,21 @@ def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides(
     assert 'env.commands.task_command.success_threshold_scale="$SUCCESS_THRESHOLD_SCALE"' in script
     assert "insertive_object_color='[0.0,1.0,0.0]'" in script
     assert "receptive_object_color='[1.0,0.0,0.0]'" in script
+
+
+def test_cube_stack_vision_deploy_script_uses_vision_deploy_task_and_checkpoint():
+    script = (REPO_ROOT / "scripts_cube_stack" / "11_deploy_vision_policy.sh").read_text()
+
+    assert "model_8100.pt" in script
+    assert "--task OmniReset-Arx5-OSC-Vision-Deploy-Play-v0" in script
+    assert "--enable_cameras" in script
+    assert "--checkpoint \"$CKPT\"" in script
+    assert 'NUM_ENVS="${NUM_ENVS:-1}"' in script
+    assert 'RECORD_DEPLOY_CAMERAS="${RECORD_DEPLOY_CAMERAS:-true}"' in script
+    assert "--record_deploy_cameras_until_reset" in script
+    assert "--deploy_camera_output_dir \"$CAMERA_OUTPUT_DIR\"" in script
+    assert 'agent.algorithm.teacher_checkpoint=""' in script
+    assert "env.scene.insertive_object=cube" in script
+    assert "env.scene.receptive_object=cube" in script
+    assert "env.commands.task_command.success_mode=stack_center" in script
+    assert "env.commands.task_command.success_orientation_required=false" in script

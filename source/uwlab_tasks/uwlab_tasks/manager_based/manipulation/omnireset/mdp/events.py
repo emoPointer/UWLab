@@ -1049,6 +1049,40 @@ class MultiResetManager(ManagerTermBase):
 
         self.task_id = torch.randint(0, self.num_tasks, (self.num_envs,), device=self.device)
 
+    def _match_articulation_joint_state_shape(
+        self,
+        articulation: Articulation,
+        joint_position: torch.Tensor,
+        joint_velocity: torch.Tensor,
+        env_ids: torch.Tensor,
+        asset_name: str,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        target_joint_count = articulation.data.joint_pos.shape[1]
+        saved_joint_count = joint_position.shape[-1]
+        if saved_joint_count == target_joint_count:
+            return joint_position, joint_velocity
+
+        warning_key = (asset_name, saved_joint_count, target_joint_count)
+        warned = getattr(self, "_joint_shape_warning_keys", set())
+        if warning_key not in warned:
+            print(
+                "[WARN] Reset-state joint dimension mismatch for "
+                f"{asset_name}: saved={saved_joint_count}, current={target_joint_count}; "
+                "using the leading matching joints and defaulting any missing joints.",
+                flush=True,
+            )
+            warned.add(warning_key)
+            self._joint_shape_warning_keys = warned
+
+        if saved_joint_count > target_joint_count:
+            return joint_position[..., :target_joint_count], joint_velocity[..., :target_joint_count]
+
+        matched_position = articulation.data.default_joint_pos[env_ids].clone()
+        matched_velocity = torch.zeros_like(matched_position)
+        matched_position[..., :saved_joint_count] = joint_position
+        matched_velocity[..., :saved_joint_count] = joint_velocity
+        return matched_position, matched_velocity
+
     def __call__(
         self,
         env: ManagerBasedEnv,
@@ -1144,6 +1178,9 @@ class MultiResetManager(ManagerTermBase):
             # joint state
             joint_position = asset_state["joint_position"].clone()
             joint_velocity = asset_state["joint_velocity"].clone()
+            joint_position, joint_velocity = self._match_articulation_joint_state_shape(
+                articulation, joint_position, joint_velocity, env_ids, asset_name
+            )
             articulation.write_joint_state_to_sim(joint_position, joint_velocity, env_ids=env_ids)
             # FIXME: This is not generic as it assumes PD control over the joints.
             #   This assumption does not hold for effort controlled joints.
@@ -1590,6 +1627,60 @@ def randomize_dome_light(
     )
 
 
+class SharedDomeLightRandomizer(ManagerTermBase):
+    """Randomize one global DomeLight once per reset batch and share it across all environments."""
+
+    def __init__(self, cfg: EventTermCfg, env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        light_path = cfg.params.get("light_path", "/World/skyLight")
+        stage = omni.usd.get_context().get_stage()
+        self.light_prim = stage.GetPrimAtPath(light_path)
+        if not self.light_prim.IsValid():
+            raise RuntimeError(f"[SharedDomeLightRandomizer] Light prim at '{light_path}' does not exist on the stage.")
+        dome_light = UsdLux.DomeLight(self.light_prim)
+        if not dome_light:
+            raise RuntimeError(f"[SharedDomeLightRandomizer] Prim at '{light_path}' is not a DomeLight.")
+
+        self.intensity_attr = self.light_prim.GetAttribute("inputs:intensity")
+        self.xformable = UsdGeom.Xformable(self.light_prim)
+        self.xformable.ClearXformOpOrder()
+        self.orient_op = self.xformable.AddOrientOp(precision=UsdGeom.XformOp.PrecisionDouble)
+
+    def __call__(
+        self,
+        env: ManagerBasedEnv,
+        env_ids: torch.Tensor,
+        light_path: str = "/World/skyLight",
+        intensity_range: Sequence[float] = (800.0, 3000.0),
+        rotation_range: Sequence[float] = (0.0, 360.0),
+        pitch_range: Sequence[float] = (0.0, 0.0),
+        roll_range: Sequence[float] = (0.0, 0.0),
+    ) -> None:
+        if env_ids is not None and not isinstance(env_ids, slice) and len(env_ids) == 0:
+            return
+
+        intensity = _sample_float_range(intensity_range)
+        self.intensity_attr.Set(float(intensity))
+
+        roll = math.radians(_sample_float_range(roll_range))
+        pitch = math.radians(_sample_float_range(pitch_range))
+        yaw = math.radians(_sample_float_range(rotation_range))
+        quat = math_utils.quat_from_euler_xyz(
+            torch.tensor([roll], dtype=torch.float64),
+            torch.tensor([pitch], dtype=torch.float64),
+            torch.tensor([yaw], dtype=torch.float64),
+        )[0]
+        self.orient_op.Set(Gf.Quatd(float(quat[0]), Gf.Vec3d(float(quat[1]), float(quat[2]), float(quat[3]))))
+
+        logging.debug(
+            "[SharedDomeLightRandomizer] Applied shared light: intensity=%.3f roll=%.3f pitch=%.3f yaw=%.3f",
+            intensity,
+            math.degrees(roll),
+            math.degrees(pitch),
+            math.degrees(yaw),
+        )
+
+
 def set_task_object_visual_colors(
     env: ManagerBasedEnv,
     env_ids: torch.Tensor,
@@ -1674,9 +1765,8 @@ def align_deploy_scene_to_robosuite_table(
     target_pose = _pose_tensor(robosuite_robot_base_pose, env, env_ids)
     translation_delta = target_pose[:, :3] - source_pose[:, :3]
 
-    robot_pose = robot.data.root_pose_w[env_ids].clone()
-    robot_pose[:, :3] += translation_delta
-    robot_pose[:, 3:7] = target_pose[:, 3:7]
+    robot_pose_before_align = robot.data.root_pose_w[env_ids].clone()
+    robot_pose = target_pose.clone()
     if robot_xy_jitter_m > 0.0:
         robot_xy_jitter = torch.empty((len(env_ids), 3), dtype=torch.float32, device=env.device).uniform_(
             -float(robot_xy_jitter_m), float(robot_xy_jitter_m)
@@ -1685,10 +1775,11 @@ def align_deploy_scene_to_robosuite_table(
         robot_pose[:, :2] += robot_xy_jitter[:, :2]
     _write_articulation_root_pose_with_visual_sync(robot, robot_pose, env_ids, sync_visuals=sync_visuals)
 
+    robot_actual_delta = robot_pose[:, :3] - robot_pose_before_align[:, :3]
     insertive_pose = insertive_object.data.root_pose_w[env_ids].clone()
-    insertive_pose[:, :3] += translation_delta
+    insertive_pose[:, :3] += robot_actual_delta
     receptive_pose_after_base_align = receptive_object.data.root_pose_w[env_ids].clone()
-    receptive_pose_after_base_align[:, :3] += translation_delta
+    receptive_pose_after_base_align[:, :3] += robot_actual_delta
 
     table_root_pose = _pose_tensor(table_pose, env, env_ids)
     _write_rigid_root_pose_with_visual_sync(table, table_root_pose, env_ids, sync_visuals=sync_visuals)
