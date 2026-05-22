@@ -21,6 +21,10 @@ class Hdf5ActionReplayConfig(IsaacMuJoCoRenderConfig):
     ee_body_name: str = "link6"
     env_spacing: float = 3.0
     real_time: bool = False
+    reset_state_dataset_path: str | None = (
+        "Datasets/OmniReset/Resets/InsertiveCube__ReceptiveCube/resets_ObjectAnywhereEEAnywhere.pt"
+    )
+    reset_state_match_tolerance_m: float = 1.0e-4
 
 
 def configure_cube_replay_reset(env_cfg) -> None:
@@ -74,6 +78,7 @@ class Hdf5ActionReplayRunner:
         self.simulation_app = simulation_app
         self.ee_body_id = self._find_single_body_id(env.unwrapped.scene["robot"], config.ee_body_name)
         self.render_session = IsaacMuJoCoRenderSession(env, config)
+        self._reset_state_cache: dict[str, dict[str, np.ndarray]] = {}
 
     def close(self) -> None:
         self.render_session.close()
@@ -91,6 +96,8 @@ class Hdf5ActionReplayRunner:
         actions = torch.tensor(rollout["actions"], dtype=torch.float32, device=self.env.unwrapped.device)
         print(f"[INFO] Loaded rollout: {dataset_file} actions={actions.shape[0]} x {actions.shape[1]}")
         source_env_origin = self._reset_to_recorded_initial_state(rollout)
+        if self.config.randomize_light_angles:
+            self.render_session.randomize_light_angles()
         step_dt = float(self.env.unwrapped.step_dt)
         print(
             f"[INFO] Replaying with Isaac physics at {1.0 / step_dt:.3f} Hz; "
@@ -143,6 +150,9 @@ class Hdf5ActionReplayRunner:
         self.env.reset()
         source_env_origin = self._infer_source_env_origin(rollout)
         print(f"[INFO] Replay source env origin: {[round(float(v), 4) for v in source_env_origin]}", flush=True)
+        robot_state = self._resolve_initial_robot_state(rollout, source_env_origin)
+        if robot_state is not None:
+            self._write_robot_state(robot_state, source_env_origin)
         self._write_object_pose(
             "insertive_object",
             rollout["insertive_cube_pos"][0],
@@ -158,6 +168,164 @@ class Hdf5ActionReplayRunner:
         unwrapped_env.scene.write_data_to_sim()
         unwrapped_env.sim.forward()
         return source_env_origin
+
+    def _resolve_initial_robot_state(
+        self, rollout: dict[str, np.ndarray], source_env_origin: np.ndarray
+    ) -> dict[str, np.ndarray | str | int | float] | None:
+        if "robot_joint_pos" in rollout:
+            joint_velocity = (
+                rollout["robot_joint_vel"][0]
+                if "robot_joint_vel" in rollout
+                else np.zeros_like(rollout["robot_joint_pos"][0])
+            )
+            robot_state: dict[str, np.ndarray | str | int | float] = {
+                "joint_position": rollout["robot_joint_pos"][0],
+                "joint_velocity": joint_velocity,
+                "source": "hdf5",
+            }
+            if "robot_root_pose" in rollout:
+                robot_state["root_pose"] = rollout["robot_root_pose"][0]
+                robot_state["root_pose_frame"] = "world"
+            return robot_state
+
+        robot_state = self._infer_initial_robot_state_from_reset_dataset(rollout, source_env_origin)
+        if robot_state is None:
+            print(
+                "[WARN] HDF5 has no obs/robot_joint_pos and no reset-state match was available; "
+                "replay will use the environment default robot initial joint pose.",
+                flush=True,
+            )
+        return robot_state
+
+    def _infer_initial_robot_state_from_reset_dataset(
+        self, rollout: dict[str, np.ndarray], source_env_origin: np.ndarray
+    ) -> dict[str, np.ndarray | str | int | float] | None:
+        if not self.config.reset_state_dataset_path:
+            return None
+
+        reset_states = self._load_reset_state_dataset(self.config.reset_state_dataset_path)
+        if reset_states is None:
+            return None
+
+        target_insertive_pos = rollout["insertive_cube_pos"][0] - source_env_origin
+        target_receptive_pos = rollout["receptive_cube_pos"][0] - source_env_origin
+        target_insertive_quat = rollout["insertive_cube_quat"][0]
+        target_receptive_quat = rollout["receptive_cube_quat"][0]
+
+        insertive_pos_error = np.linalg.norm(reset_states["insertive_root_pose"][:, :3] - target_insertive_pos, axis=1)
+        receptive_pos_error = np.linalg.norm(reset_states["receptive_root_pose"][:, :3] - target_receptive_pos, axis=1)
+        insertive_quat_error = 1.0 - np.abs(
+            np.sum(reset_states["insertive_root_pose"][:, 3:7] * target_insertive_quat.reshape(1, 4), axis=1)
+        ).clip(0.0, 1.0)
+        receptive_quat_error = 1.0 - np.abs(
+            np.sum(reset_states["receptive_root_pose"][:, 3:7] * target_receptive_quat.reshape(1, 4), axis=1)
+        ).clip(0.0, 1.0)
+        score = insertive_pos_error + receptive_pos_error + 0.05 * (insertive_quat_error + receptive_quat_error)
+        match_index = int(np.argmin(score))
+        match_pos_error = float(insertive_pos_error[match_index] + receptive_pos_error[match_index])
+
+        if match_pos_error > self.config.reset_state_match_tolerance_m:
+            print(
+                "[WARN] Best reset-state robot match is not exact: "
+                f"index={match_index} object_pos_error={match_pos_error:.6f}m "
+                f"tolerance={self.config.reset_state_match_tolerance_m:.6f}m",
+                flush=True,
+            )
+        else:
+            print(
+                "[INFO] Matched initial robot state from reset dataset: "
+                f"index={match_index} object_pos_error={match_pos_error:.6f}m",
+                flush=True,
+            )
+
+        return {
+            "root_pose": reset_states["robot_root_pose"][match_index],
+            "root_pose_frame": "env_local",
+            "joint_position": reset_states["robot_joint_position"][match_index],
+            "joint_velocity": reset_states["robot_joint_velocity"][match_index],
+            "source": "reset_state_dataset",
+            "reset_state_index": match_index,
+            "match_pos_error_m": match_pos_error,
+        }
+
+    def _load_reset_state_dataset(self, reset_state_dataset_path: str) -> dict[str, np.ndarray] | None:
+        dataset_path = Path(reset_state_dataset_path).expanduser()
+        if not dataset_path.is_absolute():
+            dataset_path = Path.cwd() / dataset_path
+        cache_key = str(dataset_path)
+        if cache_key in self._reset_state_cache:
+            return self._reset_state_cache[cache_key]
+        if not dataset_path.is_file():
+            print(f"[WARN] reset-state dataset not found: {dataset_path}", flush=True)
+            return None
+
+        data = torch.load(dataset_path, map_location="cpu")
+        state = data["initial_state"]
+        reset_states = {
+            "robot_root_pose": self._stack_reset_values(state["articulation"]["robot"]["root_pose"]),
+            "robot_joint_position": self._stack_reset_values(state["articulation"]["robot"]["joint_position"]),
+            "robot_joint_velocity": self._stack_reset_values(state["articulation"]["robot"]["joint_velocity"]),
+            "insertive_root_pose": self._stack_reset_values(state["rigid_object"]["insertive_object"]["root_pose"]),
+            "receptive_root_pose": self._stack_reset_values(state["rigid_object"]["receptive_object"]["root_pose"]),
+        }
+        self._reset_state_cache[cache_key] = reset_states
+        print(f"[INFO] Loaded reset-state dataset for robot initialization: {dataset_path}", flush=True)
+        return reset_states
+
+    @staticmethod
+    def _stack_reset_values(values) -> np.ndarray:
+        stacked = torch.stack([value.detach().cpu() if hasattr(value, "detach") else torch.as_tensor(value) for value in values])
+        return stacked.numpy().astype(np.float32, copy=False)
+
+    def _write_robot_state(
+        self, robot_state: dict[str, np.ndarray | str | int | float], source_env_origin: np.ndarray
+    ) -> None:
+        unwrapped_env = self.env.unwrapped
+        robot = unwrapped_env.scene["robot"]
+        device = unwrapped_env.device
+        env_ids = torch.tensor([0], dtype=torch.long, device=device)
+
+        root_pose = robot_state.get("root_pose")
+        if root_pose is not None:
+            target_root_pose = np.asarray(root_pose, dtype=np.float32).copy()
+            root_pose_frame = robot_state.get("root_pose_frame", "world")
+            if root_pose_frame == "env_local":
+                target_root_pose[:3] += unwrapped_env.scene.env_origins[0].detach().cpu().numpy()
+            else:
+                target_root_pose[:3] = (
+                    target_root_pose[:3]
+                    - source_env_origin
+                    + unwrapped_env.scene.env_origins[0].detach().cpu().numpy()
+                )
+            root_tensor = torch.tensor(target_root_pose, dtype=torch.float32, device=device).unsqueeze(0)
+            robot.write_root_pose_to_sim(root_tensor, env_ids=env_ids)
+            robot.write_root_velocity_to_sim(torch.zeros((1, 6), dtype=torch.float32, device=device), env_ids=env_ids)
+
+        joint_position = np.asarray(robot_state["joint_position"], dtype=np.float32)
+        joint_velocity = np.asarray(robot_state["joint_velocity"], dtype=np.float32)
+        joint_pos_tensor = torch.tensor(joint_position, dtype=torch.float32, device=device).reshape(1, -1)
+        joint_vel_tensor = torch.tensor(joint_velocity, dtype=torch.float32, device=device).reshape(1, -1)
+        joint_pos_tensor, joint_vel_tensor = self._match_robot_joint_state_shape(
+            robot, joint_pos_tensor, joint_vel_tensor, env_ids
+        )
+        robot.write_joint_state_to_sim(joint_pos_tensor, joint_vel_tensor, env_ids=env_ids)
+        robot.set_joint_position_target(joint_pos_tensor, env_ids=env_ids)
+        robot.set_joint_velocity_target(joint_vel_tensor, env_ids=env_ids)
+        print(f"[INFO] Restored initial robot state from {robot_state.get('source', 'unknown')}.", flush=True)
+
+    @staticmethod
+    def _match_robot_joint_state_shape(robot, joint_position: torch.Tensor, joint_velocity: torch.Tensor, env_ids):
+        target_joint_count = robot.data.joint_pos.shape[1]
+        saved_joint_count = joint_position.shape[-1]
+        if saved_joint_count == target_joint_count:
+            return joint_position, joint_velocity
+        if saved_joint_count > target_joint_count:
+            return joint_position[:, :target_joint_count], joint_velocity[:, :target_joint_count]
+        matched_position = robot.data.default_joint_pos[env_ids].clone()
+        matched_velocity = torch.zeros_like(matched_position)
+        matched_position[:, :saved_joint_count] = joint_position
+        matched_velocity[:, :saved_joint_count] = joint_velocity
+        return matched_position, matched_velocity
 
     def _write_object_pose(self, asset_name: str, pos: np.ndarray, quat: np.ndarray, source_env_origin: np.ndarray):
         unwrapped_env = self.env.unwrapped
@@ -242,6 +410,16 @@ class Hdf5ActionReplayRunner:
             }
             if "obs/eef_pos" in h5_file:
                 rollout["eef_pos"] = h5_file["obs/eef_pos"][:].astype(np.float32, copy=False)
+            if "obs/robot_root_pose" in h5_file:
+                rollout["robot_root_pose"] = h5_file["obs/robot_root_pose"][:].astype(np.float32, copy=False)
+            if "obs/robot_joint_pos" in h5_file:
+                rollout["robot_joint_pos"] = h5_file["obs/robot_joint_pos"][:].astype(np.float32, copy=False)
+            elif "obs/joint_pos" in h5_file:
+                rollout["robot_joint_pos"] = h5_file["obs/joint_pos"][:].astype(np.float32, copy=False)
+            if "obs/robot_joint_vel" in h5_file:
+                rollout["robot_joint_vel"] = h5_file["obs/robot_joint_vel"][:].astype(np.float32, copy=False)
+            elif "obs/joint_vel" in h5_file:
+                rollout["robot_joint_vel"] = h5_file["obs/joint_vel"][:].astype(np.float32, copy=False)
             if "source_env_origin" in h5_file.attrs:
                 rollout["source_env_origin"] = np.asarray(h5_file.attrs["source_env_origin"], dtype=np.float32)
             return rollout

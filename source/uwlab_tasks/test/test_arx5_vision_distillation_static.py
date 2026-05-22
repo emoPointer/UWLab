@@ -147,12 +147,29 @@ def test_vision_distillation_agent_cfg_uses_resnet18_and_online_teacher_loss():
 def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     train_py = (REPO_ROOT / "scripts" / "reinforcement_learning" / "rsl_rl" / "train.py").read_text()
     play_py = (REPO_ROOT / "scripts" / "reinforcement_learning" / "rsl_rl" / "play.py").read_text()
+    mujoco_play_py = (REPO_ROOT / "scripts_mujoco_isaac" / "play_with_mujoco_renderer.py").read_text()
     runner = (UWLAB_RL_DIR / "vision_distill_runner.py").read_text()
     ppo = (UWLAB_RL_DIR / "vision_distill_ppo.py").read_text()
     actor_critic = (UWLAB_RL_DIR / "vision_actor_critic.py").read_text()
 
     assert "VisionDistillOnPolicyRunner" in train_py
     assert "VisionDistillOnPolicyRunner" in play_py
+    assert "VisionDistillOnPolicyRunner" in mujoco_play_py
+    assert "--mujoco_policy_images" in mujoco_play_py
+    assert "crop_size=400" in mujoco_play_py
+    assert "crop_size=None" in mujoco_play_py
+    assert "output_size=(128, 128)" in mujoco_play_py
+    assert "render_session.render_frames" in mujoco_play_py
+    assert "_inject_mujoco_policy_images(obs, frames, args_cli)" in mujoco_play_py
+    assert "sync_camera_poses=args_cli.mujoco_policy_images" in mujoco_play_py
+    assert "--randomize_mujoco_light_angles" in mujoco_play_py
+    assert "randomize_light_angles=args_cli.randomize_mujoco_light_angles" in mujoco_play_py
+    assert "render_session.randomize_light_angles()" in mujoco_play_py
+    assert 'args_cli.task is not None and "Vision" in args_cli.task' in mujoco_play_py
+    assert "sensor_cfg.update_latest_camera_pose = True" in mujoco_play_py
+    assert "_make_mujoco_video_recorders" in mujoco_play_py
+    assert "_derive_mujoco_video_path" in mujoco_play_py
+    assert "Saved MuJoCo-rendered video ({camera})" in mujoco_play_py
     assert 'args_cli.task is not None and "Vision" in args_cli.task' in play_py
     assert "Skipping flat JIT/ONNX export for structured vision policy" in play_py
     assert "class VisionDistillOnPolicyRunner(OnPolicyRunner)" in runner
@@ -218,6 +235,24 @@ def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides(
     assert 'agent.algorithm.teacher_checkpoint="$TEACHER_CKPT"' in script
     assert 'agent.algorithm.distillation.lambda_initial="$DISTILL_LAMBDA_INITIAL"' in script
     assert 'agent.algorithm.distillation.lambda_final="$DISTILL_LAMBDA_FINAL"' in script
+
+
+def test_cube_stack_mujoco_image_vision_deploy_script_uses_mujoco_policy_images():
+    script = (REPO_ROOT / "scripts_cube_stack" / "12_deploy_vision_policy_mujoco_images.sh").read_text()
+
+    assert "model_8100.pt" in script
+    assert "scripts_mujoco_isaac/play_with_mujoco_renderer.py" in script
+    assert "--task OmniReset-Arx5-OSC-Vision-Deploy-Play-v0" in script
+    assert "--mujoco_policy_images" in script
+    assert "--mujoco_external_camera external_camera" in script
+    assert "--mujoco_wrist_camera wrist_camera" in script
+    assert "--mujoco_video_width" in script
+    assert "--mujoco_video_height" in script
+    assert 'RANDOMIZE_MUJOCO_LIGHT_ANGLES="${RANDOMIZE_MUJOCO_LIGHT_ANGLES:-true}"' in script
+    assert "--randomize_mujoco_light_angles" in script
+    assert "--mujoco_light_yaw_range" in script
+    assert "--mujoco_light_elevation_range" in script
+    assert 'agent.algorithm.teacher_checkpoint=""' in script
     assert "env.scene.insertive_object=cube" in script
     assert "env.scene.receptive_object=cube" in script
     assert "env.commands.task_command.success_mode=stack_center" in script

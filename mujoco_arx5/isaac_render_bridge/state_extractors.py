@@ -36,6 +36,11 @@ def _pose_from_asset_data(data, env_index: int) -> Pose:
 
 
 def _pose_from_camera_data(data, env_index: int) -> Pose:
+    if hasattr(data, "pos_w") and hasattr(data, "quat_w_opengl"):
+        return Pose(
+            position=_select_env(data.pos_w, env_index).copy(),
+            quaternion=_select_env(data.quat_w_opengl, env_index).copy(),
+        )
     if hasattr(data, "pos_w") and hasattr(data, "quat_w_world"):
         return Pose(
             position=_select_env(data.pos_w, env_index).copy(),

@@ -34,6 +34,17 @@ parser.add_argument("--mujoco_video_width", type=int, default=640)
 parser.add_argument("--mujoco_video_height", type=int, default=480)
 parser.add_argument("--mujoco_insertive_body", type=str, default="insertive_cube")
 parser.add_argument("--mujoco_receptive_body", type=str, default="receptive_cube")
+parser.add_argument("--randomize_light_angles", action="store_true", default=False)
+parser.add_argument("--mujoco_light_yaw_range_deg", type=float, nargs=2, default=(0.0, 360.0))
+parser.add_argument("--mujoco_light_elevation_range_deg", type=float, nargs=2, default=(35.0, 75.0))
+parser.add_argument("--mujoco_light_distance_range", type=float, nargs=2, default=(2.0, 3.0))
+parser.add_argument("--mujoco_light_seed", type=int, default=None)
+parser.add_argument(
+    "--reset_state_dataset_path",
+    type=str,
+    default="Datasets/OmniReset/Resets/InsertiveCube__ReceptiveCube/resets_ObjectAnywhereEEAnywhere.pt",
+)
+parser.add_argument("--reset_state_match_tolerance_m", type=float, default=1.0e-4)
 parser.add_argument("--no-video", action="store_true", default=False)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -78,6 +89,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, _age
         mujoco_video_height=args_cli.mujoco_video_height,
         mujoco_insertive_body=args_cli.mujoco_insertive_body,
         mujoco_receptive_body=args_cli.mujoco_receptive_body,
+        randomize_light_angles=args_cli.randomize_light_angles,
+        mujoco_light_yaw_range_deg=tuple(args_cli.mujoco_light_yaw_range_deg),
+        mujoco_light_elevation_range_deg=tuple(args_cli.mujoco_light_elevation_range_deg),
+        mujoco_light_distance_range=tuple(args_cli.mujoco_light_distance_range),
+        mujoco_light_seed=args_cli.mujoco_light_seed,
+        reset_state_dataset_path=args_cli.reset_state_dataset_path,
+        reset_state_match_tolerance_m=args_cli.reset_state_match_tolerance_m,
         metrics_path=args_cli.metrics_path,
         ee_body_name=args_cli.ee_body_name,
         env_spacing=args_cli.env_spacing,
