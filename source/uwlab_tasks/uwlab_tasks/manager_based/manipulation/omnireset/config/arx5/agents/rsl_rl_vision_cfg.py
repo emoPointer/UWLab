@@ -8,7 +8,13 @@ from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg
 
 from uwlab_rl.rsl_rl.rl_cfg import (
     RslRlActionDistillationCfg,
+    RslRlDepthMaskCrossAttentionCfg,
+    RslRlModalPatchEncoderCfg,
+    RslRlModalVisionActorCriticCfg,
     RslRlProprioEncoderCfg,
+    RslRlSSIStyleModalEncoderCfg,
+    RslRlSpatialTokenTransformerCfg,
+    RslRlTrackPatchEncoderCfg,
     RslRlVisionActorCriticCfg,
     RslRlVisionDistillPpoAlgorithmCfg,
     RslRlVisionEncoderCfg,
@@ -84,4 +90,62 @@ class VisionDistill_PPORunnerCfg(RslRlOnPolicyRunnerCfg):
             lambda_final=0.05,
             decay_iterations=8000,
         ),
+    )
+
+
+@configclass
+class ModalVisionDistill_PPORunnerCfg(VisionDistill_PPORunnerCfg):
+    """Online PPO distillation for SSI-style depth/bbox/trajectory modal observations."""
+
+    experiment_name = "arx5_omnireset_modal_vision_distill"
+    wandb_project = "arx5_modal_vision_distill"
+
+    policy = RslRlModalVisionActorCriticCfg(
+        modal_encoder=RslRlSSIStyleModalEncoderCfg(
+            num_views=2,
+            image_size=128,
+            max_bbox_num=3,
+            track_len=16,
+            num_track_ids=32,
+            track_patch_size=16,
+            embed_dim=256,
+            depth_encoder=RslRlModalPatchEncoderCfg(
+                patch_size=8,
+                conv_channels=64,
+                no_patch_embed_bias=False,
+            ),
+            mask_encoder=RslRlModalPatchEncoderCfg(
+                patch_size=8,
+                conv_channels=64,
+                no_patch_embed_bias=False,
+            ),
+            track_encoder=RslRlTrackPatchEncoderCfg(
+                patch_size=16,
+            ),
+            cross_attention=RslRlDepthMaskCrossAttentionCfg(
+                num_heads=8,
+                dropout=0.1,
+                ffn_mult=4,
+            ),
+            spatial_transformer=RslRlSpatialTokenTransformerCfg(
+                num_layers=4,
+                num_heads=8,
+                ffn_dim=512,
+                dropout=0.1,
+            ),
+        ),
+        use_joint_pos=False,
+        proprio_mlp=RslRlProprioEncoderCfg(hidden_dims=[64, 64], feature_dim=32),
+        actor_hidden_dims=[256, 128, 64],
+        critic_hidden_dims=[512, 256, 128, 64],
+        activation="elu",
+        init_noise_std=1.0,
+        noise_std_type="log",
+        actor_obs_normalization=False,
+        proprio_obs_normalization=True,
+        critic_obs_normalization=True,
+        depth_term_name="depth_map",
+        bboxes_term_name="bboxes",
+        trajectory_term_name="trajectory",
+        joint_pos_term_name="joint_pos",
     )

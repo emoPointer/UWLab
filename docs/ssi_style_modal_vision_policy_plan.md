@@ -179,6 +179,97 @@ trajectory: (B, 2, 16, 32, 2)
 
 Unlike the A100 training code, there is no observation time dimension `T=2` in this first UWLab version.
 
+## Runtime Environment Notes
+
+Detailed dependency, checkpoint, and setup commands are maintained in:
+
+```text
+docs/modal_vision_runtime_environment.md
+```
+
+Modal vision training runs inside the same Isaac environment used by the RSL-RL scripts:
+
+```text
+conda environment: env_isaaclab
+```
+
+The online modal extractor imports SSI-SimToReal components at runtime:
+
+```text
+GroundingDINO / Grounded-SAM2
+DepthAnything
+TrackTransformer trajectory predictor
+BERT task embedding
+```
+
+GroundingDINO has an optional compiled extension:
+
+```text
+groundingdino._C
+```
+
+This `_C` module implements the CUDA/C++ path for `ms_deform_attn`. It is not a separate model weight; it is a compiled operator used by GroundingDINO during bbox detection.
+
+Expected behavior:
+
+```text
+_C compiled and importable:
+  detection uses the fast CUDA operator
+  lower memory pressure
+  preferred for training
+
+_C missing:
+  UWLab falls back to the PyTorch implementation
+  results should remain semantically equivalent
+  detection is slower and uses noticeably more GPU memory
+  reduce NUM_ENVS and MODAL_BATCH_SIZE when debugging
+```
+
+Compile `_C` in the same Python environment used by Isaac training, because the Isaac training process imports GroundingDINO from that environment:
+
+```bash
+cd "$SSI_ROOT/Grounded_SAM_2/grounding_dino"
+
+export PATH="$CUDA_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$CUDA_HOME/lib64:$LD_LIBRARY_PATH"
+export TORCH_CUDA_ARCH_LIST="8.0"
+export MAX_JOBS=8
+
+"$ISAAC_PYTHON" -m pip install -v -e .
+```
+
+Use the matching architecture when not training on A100:
+
+```text
+A100:      TORCH_CUDA_ARCH_LIST="8.0"
+RTX 3090:  TORCH_CUDA_ARCH_LIST="8.6"
+RTX A6000: TORCH_CUDA_ARCH_LIST="8.6"
+RTX 4090:  TORCH_CUDA_ARCH_LIST="8.9"
+```
+
+Verify the extension:
+
+```bash
+export PYTHONPATH="$SSI_ROOT/Grounded_SAM_2/grounding_dino:$SSI_ROOT/Grounded_SAM_2:$PYTHONPATH"
+"$ISAAC_PYTHON" -c \
+"import groundingdino._C as C; print('GroundingDINO _C OK:', C)"
+```
+
+If the existing extension is named like `_C.cpython-310-*.so`, it was compiled
+for Python 3.10 and will not load in Python 3.11. Rebuild it with the same
+Python interpreter used by Isaac training.
+
+If `_C` is not available, start with conservative memory settings:
+
+```bash
+NUM_ENVS=2
+MODAL_BATCH_SIZE=1
+DEPTH_CHUNK_SIZE=1
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+Then increase `NUM_ENVS` and `MODAL_BATCH_SIZE` only after confirming the modal extractor is stable.
+
 ## BBox To Mask
 
 The bbox tensor should be converted into a confidence mask before encoding.

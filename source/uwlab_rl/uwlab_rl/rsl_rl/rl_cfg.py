@@ -111,6 +111,100 @@ class RslRlProprioEncoderCfg:
 
 
 @configclass
+class RslRlModalPatchEncoderCfg:
+    """Configuration for depth/mask patch encoders in the modal actor."""
+
+    patch_size: int = 8
+    """Patch projection stride after the initial stride-2 convolution."""
+
+    conv_channels: int = 64
+    """Channel count for the initial stride-2 convolution."""
+
+    no_patch_embed_bias: bool = False
+    """Whether to remove bias from the patch projection convolution."""
+
+
+@configclass
+class RslRlTrackPatchEncoderCfg:
+    """Configuration for trajectory track patch embedding."""
+
+    patch_size: int = 16
+    """Temporal patch size for a single visual trajectory."""
+
+
+@configclass
+class RslRlDepthMaskCrossAttentionCfg:
+    """Configuration for mask-to-depth cross-attention."""
+
+    num_heads: int = 8
+    """Number of attention heads."""
+
+    dropout: float = 0.1
+    """Attention and FFN dropout."""
+
+    ffn_mult: int = 4
+    """Feed-forward hidden multiplier."""
+
+
+@configclass
+class RslRlSpatialTokenTransformerCfg:
+    """Configuration for the CLS-token spatial transformer."""
+
+    num_layers: int = 4
+    """Number of self-attention layers."""
+
+    num_heads: int = 8
+    """Number of attention heads."""
+
+    ffn_dim: int = 512
+    """Feed-forward hidden dimension."""
+
+    dropout: float = 0.1
+    """Transformer dropout."""
+
+
+@configclass
+class RslRlSSIStyleModalEncoderCfg:
+    """Configuration for depth/bbox/trajectory modal encoding."""
+
+    num_views: int = 2
+    """Number of camera views."""
+
+    image_size: int = 128
+    """Policy-resolution depth/mask size."""
+
+    max_bbox_num: int = 3
+    """Padded bbox slots per view."""
+
+    track_len: int = 16
+    """Trajectory prediction horizon per sampled point."""
+
+    num_track_ids: int = 32
+    """Number of predicted trajectory points per view."""
+
+    track_patch_size: int = 16
+    """Temporal patch size passed to TrackPatchEmbed."""
+
+    embed_dim: int = 256
+    """Modal token width. Default is smaller than the old IL/diffusion setup."""
+
+    depth_encoder: RslRlModalPatchEncoderCfg = RslRlModalPatchEncoderCfg()
+    """Depth map patch encoder config."""
+
+    mask_encoder: RslRlModalPatchEncoderCfg = RslRlModalPatchEncoderCfg()
+    """BBox confidence-mask patch encoder config."""
+
+    track_encoder: RslRlTrackPatchEncoderCfg = RslRlTrackPatchEncoderCfg()
+    """Trajectory patch encoder config."""
+
+    cross_attention: RslRlDepthMaskCrossAttentionCfg = RslRlDepthMaskCrossAttentionCfg()
+    """Depth/mask cross-attention config."""
+
+    spatial_transformer: RslRlSpatialTokenTransformerCfg = RslRlSpatialTokenTransformerCfg()
+    """Final CLS-token transformer config."""
+
+
+@configclass
 class RslRlVisionActorCriticCfg:
     """Configuration for the ARX5 vision actor and privileged critic."""
 
@@ -161,6 +255,65 @@ class RslRlVisionActorCriticCfg:
 
     wrist_rgb_term_name: str = "wrist_rgb"
     """Student wrist camera observation term name."""
+
+
+@configclass
+class RslRlModalVisionActorCriticCfg:
+    """Configuration for the modal vision actor and privileged critic."""
+
+    class_name: str = "ModalVisionActorCritic"
+    """Policy class name used by the custom vision distillation runner."""
+
+    modal_encoder: RslRlSSIStyleModalEncoderCfg = RslRlSSIStyleModalEncoderCfg()
+    """Depth/bbox/trajectory encoder configuration."""
+
+    use_joint_pos: bool = False
+    """Whether to concatenate an encoded joint-position feature after the CLS feature."""
+
+    proprio_mlp: RslRlProprioEncoderCfg = RslRlProprioEncoderCfg(feature_dim=32, hidden_dims=[64, 64])
+    """Optional joint-position encoder configuration, used only when use_joint_pos is true."""
+
+    actor_hidden_dims: list[int] = [256, 128, 64]
+    """Actor trunk hidden dimensions after encoded inputs."""
+
+    critic_hidden_dims: list[int] = [512, 256, 128, 64]
+    """Critic hidden dimensions for privileged observations."""
+
+    activation: str = "elu"
+    """Activation used by proprio, actor, and critic MLPs."""
+
+    init_noise_std: float = 1.0
+    """Initial action noise standard deviation."""
+
+    noise_std_type: Literal["scalar", "log", "gsde"] = "log"
+    """Action noise parameterization."""
+
+    state_dependent_std: bool = False
+    """Unsupported for the modal vision actor."""
+
+    actor_obs_normalization: bool = False
+    """RSL-RL compatibility field. Modal tensors are normalized by their extractors/encoders."""
+
+    proprio_obs_normalization: bool = True
+    """Whether to normalize joint positions before the optional proprio MLP."""
+
+    critic_obs_normalization: bool = True
+    """Whether to normalize privileged critic observations."""
+
+    policy_group_name: str = "policy"
+    """Observation group containing student actor terms."""
+
+    depth_term_name: str = "depth_map"
+    """Student depth-map observation term name."""
+
+    bboxes_term_name: str = "bboxes"
+    """Student bbox observation term name."""
+
+    trajectory_term_name: str = "trajectory"
+    """Student trajectory observation term name."""
+
+    joint_pos_term_name: str = "joint_pos"
+    """Optional student joint-position observation term name."""
 
 
 @configclass

@@ -47,6 +47,37 @@ VISION_EXTERNAL_CAMERA_TABLE_RELATIVE_POSE = (0.517, 0.327, 0.589, 0.3604, 0.203
 VISION_RECEPTIVE_OBJECT_POSE = (-0.30, -0.20, 0.84, 1.0, 0.0, 0.0, 0.0)
 VISION_WORKSPACE_X_RANGE = (-0.4, -0.2)
 VISION_WORKSPACE_Y_RANGE = (-0.3, -0.1)
+MODAL_VISION_SSI_ROOT = "/home/emopointer/SSI-SimToReal"
+MODAL_VISION_SSI_CONFIG = (
+    "/home/emopointer/SSI-SimToReal/results/policy/"
+    "0417_UWLab_delat_OSC_control_1447_seed42/config.yaml"
+)
+MODAL_VISION_TRAJECTORY_CONFIG = "/home/emopointer/UWLab/logs/trajectory_predict/config.yaml"
+MODAL_VISION_TRAJECTORY_CKPT = "/home/emopointer/UWLab/logs/trajectory_predict/model_final.ckpt"
+MODAL_VISION_TABLE_PROMPT = "robot, red cube, green cube"
+MODAL_VISION_WRIST_PROMPT = "red cube, green cube"
+MODAL_VISION_TASK_DESCRIPTION = "Put the red block on the green block."
+MODAL_VISION_OBS_PARAMS = {
+    "external_camera_cfg": SceneEntityCfg("external_camera"),
+    "wrist_camera_cfg": SceneEntityCfg("wrist_camera"),
+    "ssi_root": MODAL_VISION_SSI_ROOT,
+    "ssi_config": MODAL_VISION_SSI_CONFIG,
+    "trajectory_config": MODAL_VISION_TRAJECTORY_CONFIG,
+    "trajectory_ckpt": MODAL_VISION_TRAJECTORY_CKPT,
+    "table_prompt": MODAL_VISION_TABLE_PROMPT,
+    "wrist_prompt": MODAL_VISION_WRIST_PROMPT,
+    "task_description": MODAL_VISION_TASK_DESCRIPTION,
+    "process_size": 400,
+    "model_size": 128,
+    "max_bboxes": 3,
+    "track_len": 16,
+    "num_track_ids": 32,
+    "depth_encoder": "vitb",
+    "batch_size": 16,
+    "depth_chunk_size": 16,
+    "device": None,
+    "allow_bert_download": False,
+}
 
 
 @configclass
@@ -215,6 +246,63 @@ class VisionObservationsCfg:
 
 
 @configclass
+class ModalVisionObservationsCfg:
+    """Observation groups for depth/bbox/trajectory modal-policy distillation."""
+
+    @configclass
+    class PolicyCfg(ObsGroup):
+        """Student actor observations generated online from two RGB cameras."""
+
+        depth_map = ObsTerm(
+            func=task_mdp.ModalVisionObservation,
+            params={
+                **MODAL_VISION_OBS_PARAMS,
+                "modal_key": "depth_map",
+            },
+        )
+
+        bboxes = ObsTerm(
+            func=task_mdp.ModalVisionObservation,
+            params={
+                **MODAL_VISION_OBS_PARAMS,
+                "modal_key": "bboxes",
+            },
+        )
+
+        trajectory = ObsTerm(
+            func=task_mdp.ModalVisionObservation,
+            params={
+                **MODAL_VISION_OBS_PARAMS,
+                "modal_key": "trajectory",
+            },
+        )
+
+        joint_pos = ObsTerm(func=task_mdp.joint_pos)
+
+        def __post_init__(self):
+            self.enable_corruption = True
+            self.concatenate_terms = False
+            self.history_length = 1
+            self.flatten_history_dim = False
+
+    @configclass
+    class CriticCfg(ObservationsCfg.CriticCfg):
+        """Privileged critic observations inherited from the state-policy task."""
+
+        pass
+
+    @configclass
+    class TeacherPolicyCfg(ObservationsCfg.PolicyCfg):
+        """Frozen state-policy teacher observations, matching the old actor exactly."""
+
+        pass
+
+    policy: PolicyCfg = PolicyCfg()
+    critic: CriticCfg = CriticCfg()
+    teacher_policy: TeacherPolicyCfg = TeacherPolicyCfg()
+
+
+@configclass
 class Arx5OSCVisionTrainCfg(Arx5RlStateCfg):
     """Vision student training config for online PPO distillation."""
 
@@ -237,6 +325,38 @@ class Arx5OSCVisionDeployPlayCfg(Arx5OSCVisionPlayCfg):
 
     scene: DeployRlStateSceneCfg = DeployRlStateSceneCfg(num_envs=32, env_spacing=1.5)
     observations: VisionObservationsCfg = VisionObservationsCfg()
+    events: VisionDeployEventCfg = VisionDeployEventCfg()
+    terminations: DeployTerminationsCfg = DeployTerminationsCfg()
+    viewer: ViewerCfg = ViewerCfg(
+        eye=(0.45, -1.15, 1.35),
+        lookat=(-0.30, -0.20, 0.84),
+        origin_type="world",
+        env_index=0,
+        asset_name="receptive_object",
+    )
+
+
+@configclass
+class Arx5OSCModalVisionTrainCfg(Arx5OSCVisionTrainCfg):
+    """Modal vision student training config with online bbox/depth/trajectory extraction."""
+
+    scene: VisionSceneCfg = VisionSceneCfg(num_envs=16, env_spacing=3.0)
+    observations: ModalVisionObservationsCfg = ModalVisionObservationsCfg()
+
+
+@configclass
+class Arx5OSCModalVisionPlayCfg(Arx5OSCModalVisionTrainCfg):
+    """Modal vision student play/evaluation config."""
+
+    events: VisionEvalEventCfg = VisionEvalEventCfg()
+
+
+@configclass
+class Arx5OSCModalVisionDeployPlayCfg(Arx5OSCModalVisionPlayCfg):
+    """Modal vision deployment config with online bbox/depth/trajectory extraction."""
+
+    scene: DeployRlStateSceneCfg = DeployRlStateSceneCfg(num_envs=16, env_spacing=1.5)
+    observations: ModalVisionObservationsCfg = ModalVisionObservationsCfg()
     events: VisionDeployEventCfg = VisionDeployEventCfg()
     terminations: DeployTerminationsCfg = DeployTerminationsCfg()
     viewer: ViewerCfg = ViewerCfg(

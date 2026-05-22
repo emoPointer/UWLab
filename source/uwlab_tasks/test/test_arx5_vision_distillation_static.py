@@ -20,12 +20,19 @@ def test_arx5_vision_task_is_registered_with_vision_distill_agent():
     init_py = (ARX5_CONFIG_DIR / "__init__.py").read_text()
 
     assert 'id="OmniReset-Arx5-OSC-Vision-v0"' in init_py
+    assert 'id="OmniReset-Arx5-OSC-Modal-Vision-v0"' in init_py
     assert 'id="OmniReset-Arx5-OSC-Vision-Play-v0"' in init_py
+    assert 'id="OmniReset-Arx5-OSC-Modal-Vision-Play-v0"' in init_py
     assert 'id="OmniReset-Arx5-OSC-Vision-Deploy-Play-v0"' in init_py
+    assert 'id="OmniReset-Arx5-OSC-Modal-Vision-Deploy-Play-v0"' in init_py
     assert "rl_vision_cfg:Arx5OSCVisionTrainCfg" in init_py
+    assert "rl_vision_cfg:Arx5OSCModalVisionTrainCfg" in init_py
     assert "rl_vision_cfg:Arx5OSCVisionPlayCfg" in init_py
+    assert "rl_vision_cfg:Arx5OSCModalVisionPlayCfg" in init_py
     assert "rl_vision_cfg:Arx5OSCVisionDeployPlayCfg" in init_py
+    assert "rl_vision_cfg:Arx5OSCModalVisionDeployPlayCfg" in init_py
     assert "rsl_rl_vision_cfg:VisionDistill_PPORunnerCfg" in init_py
+    assert "rsl_rl_vision_cfg:ModalVisionDistill_PPORunnerCfg" in init_py
 
 
 def test_arx5_vision_observations_match_v1_plan():
@@ -144,6 +151,86 @@ def test_vision_distillation_agent_cfg_uses_resnet18_and_online_teacher_loss():
     assert "decay_iterations=8000" in agent_cfg
 
 
+def test_modal_vision_distillation_agent_cfg_is_hydra_visible():
+    agent_cfg = (ARX5_CONFIG_DIR / "agents" / "rsl_rl_vision_cfg.py").read_text()
+
+    assert "class ModalVisionDistill_PPORunnerCfg(VisionDistill_PPORunnerCfg)" in agent_cfg
+    assert 'experiment_name = "arx5_omnireset_modal_vision_distill"' in agent_cfg
+    assert 'wandb_project = "arx5_modal_vision_distill"' in agent_cfg
+    assert "RslRlModalVisionActorCriticCfg" in agent_cfg
+    assert "RslRlSSIStyleModalEncoderCfg" in agent_cfg
+    assert "RslRlModalPatchEncoderCfg" in agent_cfg
+    assert "RslRlTrackPatchEncoderCfg" in agent_cfg
+    assert "RslRlDepthMaskCrossAttentionCfg" in agent_cfg
+    assert "RslRlSpatialTokenTransformerCfg" in agent_cfg
+    assert "embed_dim=256" in agent_cfg
+    assert "use_joint_pos=False" in agent_cfg
+    assert "actor_obs_normalization=False" in agent_cfg
+    assert "in_channels=1" not in agent_cfg
+    assert "input_dim=2" not in agent_cfg
+    track_block = agent_cfg.split("track_encoder=RslRlTrackPatchEncoderCfg(", 1)[1].split("),", 1)[0]
+    assert "no_patch_embed_bias" not in track_block
+    assert 'depth_term_name="depth_map"' in agent_cfg
+    assert 'bboxes_term_name="bboxes"' in agent_cfg
+    assert 'trajectory_term_name="trajectory"' in agent_cfg
+    assert 'joint_pos_term_name="joint_pos"' in agent_cfg
+
+
+def test_modal_vision_observations_extract_depth_bbox_trajectory_online():
+    rl_vision_cfg = (ARX5_CONFIG_DIR / "rl_vision_cfg.py").read_text()
+    mdp_init = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "mdp"
+        / "__init__.py"
+    ).read_text()
+    modal_observations = (
+        REPO_ROOT
+        / "source"
+        / "uwlab_tasks"
+        / "uwlab_tasks"
+        / "manager_based"
+        / "manipulation"
+        / "omnireset"
+        / "mdp"
+        / "modal_observations.py"
+    ).read_text()
+
+    assert "class ModalVisionObservationsCfg" in rl_vision_cfg
+    assert "class Arx5OSCModalVisionTrainCfg" in rl_vision_cfg
+    assert "observations: ModalVisionObservationsCfg = ModalVisionObservationsCfg()" in rl_vision_cfg
+    assert "func=task_mdp.ModalVisionObservation" in rl_vision_cfg
+    assert '"modal_key": "depth_map"' in rl_vision_cfg
+    assert '"modal_key": "bboxes"' in rl_vision_cfg
+    assert '"modal_key": "trajectory"' in rl_vision_cfg
+    assert 'MODAL_VISION_TABLE_PROMPT = "robot, red cube, green cube"' in rl_vision_cfg
+    assert 'MODAL_VISION_WRIST_PROMPT = "red cube, green cube"' in rl_vision_cfg
+    assert 'MODAL_VISION_TASK_DESCRIPTION = "Put the red block on the green block."' in rl_vision_cfg
+    assert '"depth_encoder": "vitb"' in rl_vision_cfg
+    assert "from .modal_observations import *" in mdp_init
+    assert "class ModalVisionObservation(ManagerTermBase)" in modal_observations
+    assert "_dummy_modal_observation(env, modal_key, params)" in modal_observations
+    assert "_is_observation_manager_initializing" in modal_observations
+    assert "_uwlab_modal_vision_extractors" in modal_observations
+    assert "Grounded_SAM2" in modal_observations
+    assert "GroundingDINO _C extension is unavailable" in modal_observations
+    assert "multi_scale_deformable_attn_pytorch" in modal_observations
+    assert "init_depth_generator" in modal_observations
+    assert "TrackTransformer" in modal_observations
+    assert "AutoTokenizer.from_pretrained" in modal_observations
+    assert "predict_batch" in modal_observations
+    assert "get_depth_emb_a800" in modal_observations
+    assert "track_model\"].reconstruct" in modal_observations
+    assert "depth_map\": torch.from_numpy(depth)" in modal_observations
+    assert "bboxes\": torch.from_numpy(bboxes)" in modal_observations
+    assert "trajectory\": torch.from_numpy(trajectory)" in modal_observations
+
+
 def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     train_py = (REPO_ROOT / "scripts" / "reinforcement_learning" / "rsl_rl" / "train.py").read_text()
     play_py = (REPO_ROOT / "scripts" / "reinforcement_learning" / "rsl_rl" / "play.py").read_text()
@@ -151,6 +238,9 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     runner = (UWLAB_RL_DIR / "vision_distill_runner.py").read_text()
     ppo = (UWLAB_RL_DIR / "vision_distill_ppo.py").read_text()
     actor_critic = (UWLAB_RL_DIR / "vision_actor_critic.py").read_text()
+    modal_actor_critic = (UWLAB_RL_DIR / "modal_vision_actor_critic.py").read_text()
+    modal_encoders = (UWLAB_RL_DIR / "modal_encoders.py").read_text()
+    rl_cfg = (UWLAB_RL_DIR / "rl_cfg.py").read_text()
 
     assert "VisionDistillOnPolicyRunner" in train_py
     assert "VisionDistillOnPolicyRunner" in play_py
@@ -201,6 +291,15 @@ def test_vision_distillation_runner_and_ppo_are_integrated_with_train_play():
     assert "class VisionActorCritic" in actor_critic
     assert "resnet18" in actor_critic
     assert "supports_flat_export: bool = False" in actor_critic
+    assert "class ModalVisionActorCritic" in modal_actor_critic
+    assert "SSIStyleModalEncoder" in modal_actor_critic
+    assert "use_joint_pos: bool = False" in modal_actor_critic
+    assert "class SSIStyleModalEncoder" in modal_encoders
+    assert "embed_dim: int = 256" in modal_encoders
+    assert "class RslRlModalVisionActorCriticCfg" in rl_cfg
+    assert "class_name: str = \"ModalVisionActorCritic\"" in rl_cfg
+    assert "use_joint_pos: bool = False" in rl_cfg
+    assert "actor_obs_normalization: bool = False" in rl_cfg
 
 
 def test_multi_reset_manager_accepts_legacy_joint_state_widths_for_deploy():
@@ -235,6 +334,30 @@ def test_cube_stack_vision_distillation_training_script_exposes_hydra_overrides(
     assert 'agent.algorithm.teacher_checkpoint="$TEACHER_CKPT"' in script
     assert 'agent.algorithm.distillation.lambda_initial="$DISTILL_LAMBDA_INITIAL"' in script
     assert 'agent.algorithm.distillation.lambda_final="$DISTILL_LAMBDA_FINAL"' in script
+
+
+def test_cube_stack_modal_vision_distillation_training_script_exposes_hydra_overrides():
+    script = (REPO_ROOT / "scripts_cube_stack" / "13_train_modal_vision_distill.sh").read_text()
+
+    assert "TEACHER_CKPT" in script
+    assert "--task OmniReset-Arx5-OSC-Modal-Vision-v0" in script
+    assert "--enable_cameras" in script
+    assert 'NUM_ENVS="${NUM_ENVS:-16}"' in script
+    assert 'WANDB_PROJECT="${WANDB_PROJECT:-arx5_modal_vision_distill}"' in script
+    assert 'agent.algorithm.teacher_checkpoint="$TEACHER_CKPT"' in script
+    assert 'agent.algorithm.distillation.lambda_initial="$DISTILL_LAMBDA_INITIAL"' in script
+    assert 'agent.algorithm.distillation.lambda_final="$DISTILL_LAMBDA_FINAL"' in script
+    assert 'SSI_ROOT="${SSI_ROOT:-/home/emopointer/SSI-SimToReal}"' in script
+    assert 'TABLE_PROMPT="${TABLE_PROMPT:-robot, red cube, green cube}"' in script
+    assert 'WRIST_PROMPT="${WRIST_PROMPT:-red cube, green cube}"' in script
+    assert 'TASK_DESCRIPTION="${TASK_DESCRIPTION:-Put the red block on the green block.}"' in script
+    assert 'DEPTH_ENCODER="${DEPTH_ENCODER:-vitb}"' in script
+    assert 'env.observations.policy.depth_map.params.table_prompt="\'$TABLE_PROMPT\'"' in script
+    assert 'env.observations.policy.bboxes.params.table_prompt="\'$TABLE_PROMPT\'"' in script
+    assert 'env.observations.policy.trajectory.params.table_prompt="\'$TABLE_PROMPT\'"' in script
+    assert 'env.observations.policy.depth_map.params.wrist_prompt="\'$WRIST_PROMPT\'"' in script
+    assert 'env.observations.policy.depth_map.params.depth_encoder="$DEPTH_ENCODER"' in script
+    assert 'env.observations.policy.depth_map.params.batch_size="$MODAL_BATCH_SIZE"' in script
 
 
 def test_cube_stack_mujoco_image_vision_deploy_script_uses_mujoco_policy_images():

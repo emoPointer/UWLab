@@ -19,6 +19,7 @@ from rsl_rl.algorithms import PPO
 from rsl_rl.modules import ActorCritic, ActorCriticRecurrent, resolve_rnd_config, resolve_symmetry_config
 from rsl_rl.runners import OnPolicyRunner
 
+from .modal_vision_actor_critic import ModalVisionActorCritic
 from .vision_actor_critic import VisionActorCritic
 from .vision_distill_ppo import VisionDistillPPO
 
@@ -369,6 +370,7 @@ class VisionDistillOnPolicyRunner(OnPolicyRunner):
         policy_classes = {
             "ActorCritic": ActorCritic,
             "ActorCriticRecurrent": ActorCriticRecurrent,
+            "ModalVisionActorCritic": ModalVisionActorCritic,
             "VisionActorCritic": VisionActorCritic,
         }
         if policy_class_name not in policy_classes:

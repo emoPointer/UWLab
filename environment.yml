@@ -2,12 +2,44 @@
 # All Rights Reserved.
 #
 # SPDX-License-Identifier: BSD-3-Clause
+#
+# Environment maintenance notes:
+# - The cube-stack modal vision training path runs in the existing Isaac conda
+#   environment: env_isaaclab.
+# - This file is a lightweight project environment descriptor, not a full lock
+#   file for the local Isaac installation.
+# - Keep IsaacLab/PyTorch/CUDA pinned by the local Isaac installation. Do not
+#   install the full SSI-SimToReal requirement.txt into this environment because
+#   it pins a different torch/numpy/opencv stack.
+# - After intentionally changing env_isaaclab, refresh this descriptor from the
+#   active conda environment with:
+#     conda activate env_isaaclab
+#     conda env export --from-history > environment.yml
+# - Do not use this file to record transient local package debugging details.
+#   Modal model setup, checkpoint paths, and GroundingDINO _C notes live in:
+#     docs/modal_vision_runtime_environment.md
 
+name: env_isaaclab
 channels:
   - conda-forge
   - defaults
 dependencies:
   - python=3.11
+  - numpy=1.26.0
   - importlib_metadata
+  - pip
   - pip:
-    - huggingface_hub
+    - huggingface-hub
+    - transformers
+    - timm
+    - einops
+    - opencv-python==4.11.0.86
+    - opencv-python-headless==4.11.0.86
+    - pycocotools
+    - addict
+    - yapf
+    - supervision
+    - omegaconf
+    - hydra-core
+    - imageio
+    - imageio-ffmpeg
